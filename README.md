@@ -18,7 +18,9 @@ Implemented or being implemented in the first slice:
 - public event and project gallery endpoints;
 - submission deadline enforcement;
 - judge own-score access with peer-score isolation;
-- organizer progress and CSV export endpoints;
+- organizer progress, results, and CSV export endpoints;
+- weighted raw scoring, within-judge normalization, and deterministic ranking;
+- initial PostgreSQL migration schema;
 - health and readiness endpoints;
 - focused Go tests.
 
@@ -59,7 +61,7 @@ cd backend
 go test ./...
 ```
 
-The service is not yet a complete organizer portal. The current implementation is a foundation for the T1/T2 path, not a finished submission.
+The service is not yet a complete organizer portal. The current store is an in-memory development implementation behind a persistence boundary; PostgreSQL wiring and the full UI remain unfinished. This is a foundation for the T1/T2 path, not a finished submission.
 
 ## Planned startup
 

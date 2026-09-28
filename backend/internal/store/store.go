@@ -99,6 +99,22 @@ func (s *Store) EventByID(id string) (domain.Event, error) {
 	return event, nil
 }
 
+func (s *Store) ListEvents() []domain.Event {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]domain.Event, 0, len(s.events))
+	for _, event := range s.events {
+		result = append(result, event)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].CreatedAt.Equal(result[j].CreatedAt) {
+			return result[i].ID < result[j].ID
+		}
+		return result[i].CreatedAt.Before(result[j].CreatedAt)
+	})
+	return result
+}
+
 func (s *Store) TrackByID(id string) (domain.Track, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

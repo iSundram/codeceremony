@@ -50,6 +50,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("PUT /v1/judge/projects/{projectID}/review", s.requirePermission(domain.PermissionReviewProject, s.saveReview))
 	mux.Handle("GET /v1/organizer/progress", s.requirePermission(domain.PermissionManageEvent, s.progress))
 	mux.Handle("GET /v1/organizer/reviews", s.requirePermission(domain.PermissionViewPeerScores, s.organizerReviews))
+	mux.Handle("GET /v1/organizer/results", s.requirePermission(domain.PermissionViewPeerScores, s.results))
 	mux.Handle("GET /v1/organizer/export.csv", s.requirePermission(domain.PermissionExportData, s.exportCSV))
 	return s.middleware(mux)
 }
@@ -182,7 +183,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"data": []any{}})
+	writeJSON(w, http.StatusOK, map[string]any{"data": s.store.ListEvents()})
 }
 
 func (s *Server) event(w http.ResponseWriter, r *http.Request) {

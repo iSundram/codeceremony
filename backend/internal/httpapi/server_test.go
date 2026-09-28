@@ -156,3 +156,25 @@ func TestLoginSetsSessionCookie(t *testing.T) {
 		t.Fatal("login did not set a session cookie")
 	}
 }
+
+func TestOrganizerResultsIncludeRankingAndNormalization(t *testing.T) {
+	server, tokens, data := newTestServer(t)
+	response := request(t, server, http.MethodGet, "/v1/organizer/results", tokenFor(t, tokens, data, "organizer"), nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.Code)
+	}
+	if !strings.Contains(response.Body.String(), "normalized_mean") {
+		t.Fatalf("results body missing normalized scores: %s", response.Body.String())
+	}
+}
+
+func TestPublicEventListIsSeeded(t *testing.T) {
+	server, _, _ := newTestServer(t)
+	response := request(t, server, http.MethodGet, "/v1/events", "", nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.Code)
+	}
+	if !strings.Contains(response.Body.String(), "sample-hack-2026") {
+		t.Fatalf("event list missing seeded slug: %s", response.Body.String())
+	}
+}
