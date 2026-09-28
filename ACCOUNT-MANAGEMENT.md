@@ -1038,6 +1038,6 @@ The implementation should test at least:
 - Global roles: participant, judge, organizer, admin.
 - Service identities: explicit and non-human.
 - Permissions: deny by default and evaluated server-side.
-- Current implementation: backend has local bcrypt auth, store-backed revocable sessions, profile and password endpoints, account/session management, team membership roles, promotion/demotion/captaincy transfer, team archive safeguards, in-app notifications, admin account state/role endpoints, audit records, and first-party My Account boundaries.
-- Still pending: account recovery, PostgreSQL runtime wiring for the new tables, SMTP outbox worker, notification preferences, account export, and full account deletion/merge workflows.
+- Current implementation: backend has local bcrypt auth, store-backed revocable sessions, profile and password endpoints, account export, deletion request/cancel lifecycle, account/session management, team membership roles, promotion/demotion/captaincy transfer, team archive safeguards, in-app notifications, admin account state/role endpoints, audit records, and first-party My Account boundaries.
+- Still pending: account recovery, PostgreSQL runtime wiring for the new tables, SMTP outbox worker, notification preferences, account merge/anonymization, and durable export jobs.
 - Next implementation slice: add account recovery and PostgreSQL-backed account/session persistence.

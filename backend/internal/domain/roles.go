@@ -35,6 +35,7 @@ const (
 	PermissionManageNotifications  Permission = "manage_notifications"
 	PermissionManageIntegrations   Permission = "manage_integrations"
 	PermissionManageSelf           Permission = "manage_self"
+	PermissionCancelDeletion       Permission = "cancel_deletion"
 )
 
 var validRoles = map[Role]struct{}{
@@ -53,6 +54,7 @@ var rolePermissions = map[Role]map[Permission]struct{}{
 		PermissionVote:                 {},
 		PermissionComment:              {},
 		PermissionManageSelf:           {},
+		PermissionCancelDeletion:       {},
 		PermissionViewOwnSessions:      {},
 		PermissionRevokeOwnSession:     {},
 		PermissionViewOwnNotifications: {},
@@ -61,6 +63,7 @@ var rolePermissions = map[Role]map[Permission]struct{}{
 		PermissionViewOwnScores:        {},
 		PermissionReviewProject:        {},
 		PermissionManageSelf:           {},
+		PermissionCancelDeletion:       {},
 		PermissionViewOwnSessions:      {},
 		PermissionRevokeOwnSession:     {},
 		PermissionViewOwnNotifications: {},
@@ -74,6 +77,7 @@ var rolePermissions = map[Role]map[Permission]struct{}{
 		PermissionManageSubmission:     {},
 		PermissionManageTeam:           {},
 		PermissionManageSelf:           {},
+		PermissionCancelDeletion:       {},
 		PermissionViewOwnSessions:      {},
 		PermissionRevokeOwnSession:     {},
 		PermissionViewAnySessions:      {},
@@ -93,6 +97,7 @@ var rolePermissions = map[Role]map[Permission]struct{}{
 		PermissionManageSubmission:     {},
 		PermissionManageTeam:           {},
 		PermissionManageSelf:           {},
+		PermissionCancelDeletion:       {},
 		PermissionViewOwnSessions:      {},
 		PermissionRevokeOwnSession:     {},
 		PermissionViewAnySessions:      {},

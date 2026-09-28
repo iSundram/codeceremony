@@ -46,6 +46,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/account/profile", s.requirePermission(domain.PermissionManageSelf, s.profile))
 	mux.Handle("PATCH /v1/account/profile", s.requirePermission(domain.PermissionManageSelf, s.updateProfile))
 	mux.Handle("POST /v1/account/password", s.requirePermission(domain.PermissionManageSelf, s.changePassword))
+	mux.Handle("GET /v1/account/export", s.requirePermission(domain.PermissionManageSelf, s.exportAccount))
+	mux.Handle("POST /v1/account/deletion", s.requirePermission(domain.PermissionManageSelf, s.requestDeletion))
+	mux.Handle("POST /v1/account/deletion/cancel", s.requirePermission(domain.PermissionCancelDeletion, s.cancelDeletion))
 	mux.Handle("GET /v1/account/sessions", s.requirePermission(domain.PermissionViewOwnSessions, s.listSessions))
 	mux.Handle("DELETE /v1/account/sessions/{sessionID}", s.requirePermission(domain.PermissionRevokeOwnSession, s.revokeSession))
 	mux.Handle("POST /v1/account/sessions/revoke-others", s.requirePermission(domain.PermissionRevokeOwnSession, s.revokeOtherSessions))
@@ -130,8 +133,10 @@ func (s *Server) requirePermission(permission domain.Permission, next http.Handl
 			return
 		}
 		if user.State != "" && user.State != domain.AccountActive {
-			writeError(w, http.StatusUnauthorized, "account_unavailable", "the account is not active")
-			return
+			if !(user.State == domain.AccountDeletionPending && permission == domain.PermissionCancelDeletion) {
+				writeError(w, http.StatusUnauthorized, "account_unavailable", "the account is not active")
+				return
+			}
 		}
 		if permission != "" && !user.Role.Can(permission) {
 			writeError(w, http.StatusForbidden, "forbidden", "the current role cannot perform this action")
@@ -177,6 +182,10 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	user, err := s.store.UserByEmail(request.Email)
 	if err != nil || !auth.VerifyPassword(user.PasswordHash, request.Password) {
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "email or password is incorrect")
+		return
+	}
+	if user.State != "" && user.State != domain.AccountActive && user.State != domain.AccountDeletionPending {
+		writeError(w, http.StatusUnauthorized, "account_unavailable", "the account is not active")
 		return
 	}
 	token, err := s.tokens.Issue(user)

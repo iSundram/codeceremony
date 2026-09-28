@@ -77,6 +77,52 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]string{"status": "updated"}})
 }
 
+func (s *Server) exportAccount(w http.ResponseWriter, r *http.Request) {
+	principal, _ := auth.PrincipalFromContext(r.Context())
+	user, err := s.store.UserByID(principal.UserID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "user not found")
+		return
+	}
+	s.audit(r, principal.UserID, "account.exported", "user", principal.UserID, "", "", nil)
+	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
+		"user":          user,
+		"memberships":   s.store.TeamMembershipsForUser(principal.UserID),
+		"sessions":      s.store.ListSessions(principal.UserID),
+		"notifications": s.store.ListNotifications(principal.UserID),
+	}})
+}
+
+func (s *Server) requestDeletion(w http.ResponseWriter, r *http.Request) {
+	principal, _ := auth.PrincipalFromContext(r.Context())
+	if err := s.store.SetUserState(principal.UserID, domain.AccountDeletionPending); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "deletion_error", "account deletion could not be requested")
+		return
+	}
+	s.store.RevokeUserSessions(principal.UserID, "", "deletion_requested")
+	s.audit(r, principal.UserID, "account.deletion_requested", "user", principal.UserID, "", "user_requested", nil)
+	writeJSON(w, http.StatusAccepted, map[string]any{"data": map[string]string{"status": "deletion_pending"}})
+}
+
+func (s *Server) cancelDeletion(w http.ResponseWriter, r *http.Request) {
+	principal, _ := auth.PrincipalFromContext(r.Context())
+	user, err := s.store.UserByID(principal.UserID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "user not found")
+		return
+	}
+	if user.State != domain.AccountDeletionPending {
+		writeError(w, http.StatusConflict, "deletion_not_pending", "account deletion is not pending")
+		return
+	}
+	if err := s.store.SetUserState(principal.UserID, domain.AccountActive); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "deletion_error", "account deletion could not be canceled")
+		return
+	}
+	s.audit(r, principal.UserID, "account.deletion_canceled", "user", principal.UserID, "", "user_canceled", nil)
+	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]string{"status": "active"}})
+}
+
 func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{"data": s.store.ListSessions(principal.UserID)})

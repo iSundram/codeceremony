@@ -1283,4 +1283,4 @@ The complete first-party account, session, team-role, permission, notification, 
 - Protected actions require backend authorization and an audit event.
 - No notification or email payload may contain private judge data, unpublished results, session tokens, or secrets.
 
-These features must not displace the T1/T2 acceptance path. The current backend has local bcrypt authentication, store-backed revocable sessions, team membership roles, account session endpoints, notifications, and admin account controls.
+These features must not displace the T1/T2 acceptance path. The current backend has local bcrypt authentication, store-backed revocable sessions, profile/password/export/deletion endpoints, team membership roles, notifications, and admin account controls.

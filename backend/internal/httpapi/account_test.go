@@ -144,6 +144,28 @@ func TestProfileUpdateAndPasswordChange(t *testing.T) {
 	}
 }
 
+func TestAccountExportAndDeletionLifecycle(t *testing.T) {
+	server, _, _ := newSessionTestServer(t)
+	token := loginForTest(t, server, "participant@example.org")
+	exported := request(t, server, http.MethodGet, "/v1/account/export", token, nil)
+	if exported.Code != http.StatusOK || !bytes.Contains(exported.Body.Bytes(), []byte("memberships")) {
+		t.Fatalf("export = %d %s", exported.Code, exported.Body.String())
+	}
+	requested := request(t, server, http.MethodPost, "/v1/account/deletion", token, nil)
+	if requested.Code != http.StatusAccepted {
+		t.Fatalf("deletion request = %d, want 202", requested.Code)
+	}
+	blocked := request(t, server, http.MethodGet, "/v1/me", token, nil)
+	if blocked.Code != http.StatusUnauthorized {
+		t.Fatalf("deletion-pending account status = %d, want 401", blocked.Code)
+	}
+	newLogin := loginForTest(t, server, "participant@example.org")
+	canceled := request(t, server, http.MethodPost, "/v1/account/deletion/cancel", newLogin, nil)
+	if canceled.Code != http.StatusOK {
+		t.Fatalf("deletion cancel = %d, want 200", canceled.Code)
+	}
+}
+
 func TestAdminCanManageAccountStateButParticipantCannot(t *testing.T) {
 	server, _, _ := newSessionTestServer(t)
 	participant := loginForTest(t, server, "participant@example.org")

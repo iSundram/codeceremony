@@ -608,6 +608,19 @@ func (s *Store) TeamMembers(teamID string) []domain.TeamMembership {
 	return result
 }
 
+func (s *Store) TeamMembershipsForUser(userID string) []domain.TeamMembership {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]domain.TeamMembership, 0)
+	for _, membership := range s.memberships {
+		if membership.UserID == userID {
+			result = append(result, membership)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].TeamID < result[j].TeamID })
+	return result
+}
+
 func (s *Store) UpsertTeamMember(membership domain.TeamMembership) error {
 	if !membership.Role.Valid() {
 		return domain.ErrValidation
