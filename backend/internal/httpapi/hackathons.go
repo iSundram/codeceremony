@@ -623,6 +623,9 @@ func (s *Server) publishResults(w http.ResponseWriter, r *http.Request) {
 	})
 	s.recordActivity(r, principal.UserID, domain.ActivityResults, "results.published", "event", event.ID, event.ID,
 		"results for "+updated.Name+" were published", domain.ActivityPublic, map[string]any{"public": request.Public, "notified": notified})
+	s.webhooks.Emit(event.ID, "results.published", updated.Slug, map[string]any{
+		"public": request.Public, "notified": notified, "mailed": mailed, "pending_reviews": pending,
+	})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data":            updated,
 		"notified":        notified,
@@ -666,6 +669,7 @@ func (s *Server) unpublishResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, principal.UserID, "hackathon.results_unpublished", "event", event.ID, event.ID, request.Reason, nil)
+	s.webhooks.Emit(event.ID, "results.unpublished", event.Slug, map[string]any{"reason": request.Reason})
 	writeJSON(w, http.StatusOK, map[string]any{"data": updated})
 }
 

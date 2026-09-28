@@ -77,6 +77,7 @@ var rolePermissions = map[Role]map[Permission]struct{}{
 		PermissionViewOwnScores:        {},
 		PermissionViewPeerScores:       {},
 		PermissionManageEvent:          {},
+		PermissionManageIntegrations:   {},
 		PermissionViewAssignments:      {},
 		PermissionManageAssignments:    {},
 		PermissionExportData:           {},

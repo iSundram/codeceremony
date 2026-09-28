@@ -396,3 +396,46 @@ PostgreSQL adapter and migration execution, public voting and comments, notifica
 
 - `APP_BASE_URL` for links in mail, `SMTP_FROM_NAME`, `MAIL_INTERVAL_SECONDS`, `MAIL_BATCH_SIZE`, `MAIL_MAX_ATTEMPTS`, all documented in `.env.example`.
 - `backend/migrations/0005_activity_and_mail.sql` covers the activity log, event staff, mail preferences, mail outbox, and unsubscribe tokens.
+
+## 13. Shipped in the community and integration tranche
+
+### Comments and moderation
+
+- Threaded comments on any project with `visible`, `hidden`, and `deleted` states, a 2000 character limit, and a five-comments-per-author-per-project cap.
+- Public read for visible comments; organizers and admins also see hidden ones plus the moderation note and moderator.
+- Authors can remove their own comments; organizers hide, restore, or delete with a required note.
+- Reporting with duplicate-report protection, an organizer queue filtered by status, and actioned or dismissed resolution that requires a note.
+- Endpoints: `GET /v1/events/{slug}/comments`, `POST /v1/events/{slug}/projects/{projectID}/comments`, `DELETE /v1/comments/{commentID}`, `PUT /v1/organizer/comments/{commentID}/moderate`, `POST /v1/comments/{commentID}/report`, `GET /v1/organizer/reports`, `PUT /v1/organizer/reports/{reportID}`.
+- Comment posting is recorded in the activity log and emitted as a `comment.posted` webhook.
+
+### Community voting
+
+- Vote campaigns per hackathon with a choice budget between one and ten per participant, optional windows, an optional eligible-only rule, and a strict `draft` to `open` to `closed` lifecycle.
+- One ballot per project per participant, budget enforced across calls, duplicate and unknown projects rejected, and no voting before opening or after closing.
+- Tallies with deterministic tie-breaking, public results only after closing unless the hackathon board is public, and per-participant vote history.
+- Endpoints: `GET /v1/events/{slug}/vote-campaigns`, `POST /v1/organizer/events/{slug}/vote-campaigns`, `PUT /v1/organizer/vote-campaigns/{campaignID}/{status}`, `POST /v1/events/{slug}/vote`, `GET /v1/events/{slug}/vote`, `GET /v1/vote/mine`.
+- Closing a campaign records public activity and emits `vote.closed`.
+
+### Webhooks
+
+- Per-hackathon webhooks over https only, subscribing to a documented set of events, with a write-only signing secret of at least sixteen characters.
+- Deliveries carry `X-CodeCeremony-Event`, `X-CodeCeremony-Delivery`, `X-CodeCeremony-Timestamp`, and an HMAC-SHA256 `X-CodeCeremony-Signature` over `timestamp.body`, with a documented verification helper and replay tolerance.
+- Outbox with attempts, response code and body capture, exponential backoff capped at an hour, an attempt budget, and per-webhook delivery and failure counters.
+- A background worker runs alongside the mail worker and is driven by the same interval and batch settings.
+- Endpoints: `GET /v1/events/{slug}/webhooks`, `POST /v1/organizer/events/{slug}/webhooks`, `DELETE /v1/organizer/webhooks/{webhookID}`, `POST /v1/organizer/webhooks/{webhookID}/test`, `GET /v1/organizer/webhooks/deliveries`, `POST /v1/organizer/webhooks/flush`.
+- Events emitted today: `submission.created`, `results.published`, `results.unpublished`, `vote.closed`, and `comment.posted`.
+
+### Portability
+
+- `GET /v1/organizer/export` returns a versioned bundle covering the hackathon, tracks, prizes, questions, milestones, hosts, rubrics, roster, teams, submissions, reviews, assignments, comments, activity, participations, vote results, and stats. Password hashes, session tokens, mail secrets, and webhook signing secrets are never included.
+- `POST /v1/organizer/import` recreates a hackathon from a bundle with a dry-run mode that reports per-record warnings before anything is written, remaps ids for tracks and questions, and starts imported rubrics as drafts so nothing is scored until an organizer publishes one.
+- The existing reviews CSV export is unchanged.
+
+### API contract
+
+- `GET /v1/openapi.json` serves an OpenAPI 3.1 document with security schemes, shared schemas, and per-route auth and public flags.
+- `GET /v1/endpoints` serves the live route catalog generated during router construction, grouped by resource with auth classification, so the published surface can never drift from the running service.
+
+### Fix found in this tranche
+
+`manage_integrations` was only granted to platform admins, so organizers could not configure webhooks for the hackathons they host. It is now granted to organizers as well.

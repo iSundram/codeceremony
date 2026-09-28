@@ -32,6 +32,12 @@ type Store struct {
 	mailByDedupe       map[string]domain.MailMessage
 	mailPreferences    map[string]domain.MailPreferences
 	unsubscribe        map[string]domain.UnsubscribeToken
+	comments           map[string]domain.Comment
+	reports            map[string]domain.CommentReport
+	campaigns          map[string]domain.VoteCampaign
+	ballots            map[string]domain.Ballot
+	webhooks           map[string]domain.Webhook
+	deliveries         map[string]domain.WebhookDelivery
 	events             map[string]domain.Event
 	tracks             map[string]domain.Track
 	prizes             map[string]domain.Prize
@@ -67,6 +73,12 @@ func New(data seed.Data) *Store {
 		mailByDedupe:       make(map[string]domain.MailMessage),
 		mailPreferences:    make(map[string]domain.MailPreferences, len(data.MailPreferences)),
 		unsubscribe:        make(map[string]domain.UnsubscribeToken),
+		comments:           make(map[string]domain.Comment, len(data.Comments)),
+		reports:            make(map[string]domain.CommentReport, len(data.Comments)),
+		campaigns:          make(map[string]domain.VoteCampaign, len(data.Campaigns)),
+		ballots:            make(map[string]domain.Ballot, len(data.Ballots)),
+		webhooks:           make(map[string]domain.Webhook, len(data.Webhooks)),
+		deliveries:         make(map[string]domain.WebhookDelivery),
 		events:             make(map[string]domain.Event, len(data.Events)),
 		tracks:             make(map[string]domain.Track, len(data.Tracks)),
 		prizes:             make(map[string]domain.Prize, len(data.Prizes)),
@@ -129,6 +141,21 @@ func New(data seed.Data) *Store {
 	}
 	for _, preferences := range data.MailPreferences {
 		store.mailPreferences[preferences.UserID] = preferences
+	}
+	for _, comment := range data.Comments {
+		store.comments[comment.ID] = comment
+	}
+	for _, report := range data.Reports {
+		store.reports[report.ID] = report
+	}
+	for _, campaign := range data.Campaigns {
+		store.campaigns[campaign.ID] = campaign
+	}
+	for _, ballot := range data.Ballots {
+		store.ballots[ballot.ID] = ballot
+	}
+	for _, webhook := range data.Webhooks {
+		store.webhooks[webhook.ID] = webhook
 	}
 	for _, team := range data.Teams {
 		store.teams[team.ID] = team

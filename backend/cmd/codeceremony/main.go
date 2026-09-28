@@ -51,6 +51,7 @@ func main() {
 	shutdownContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go api.MailDispatcher().Run(shutdownContext, time.Duration(cfg.MailInterval)*time.Second, cfg.MailBatchSize)
+	go api.Webhooks().Run(shutdownContext, time.Duration(cfg.MailInterval)*time.Second, cfg.MailBatchSize)
 	logger.Info("mail dispatcher started",
 		"sender", api.MailService().Dispatcher().SenderName(),
 		"smtp_configured", cfg.SMTPConfigured(),

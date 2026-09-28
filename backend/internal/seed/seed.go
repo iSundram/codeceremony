@@ -22,6 +22,11 @@ type Data struct {
 	Activity        []domain.ActivityEntry
 	EventStaff      []domain.EventStaff
 	MailPreferences []domain.MailPreferences
+	Comments        []domain.Comment
+	Reports         []domain.CommentReport
+	Campaigns       []domain.VoteCampaign
+	Ballots         []domain.Ballot
+	Webhooks        []domain.Webhook
 	Teams           []domain.Team
 	TeamMemberships []domain.TeamMembership
 	Submissions     []domain.Submission
@@ -174,6 +179,18 @@ func Default(passwordHash string) Data {
 		MailPreferences: []domain.MailPreferences{
 			{UserID: "participant", Transactional: true, AccountSecurity: true, AccountLifecycle: true, TeamActivity: true, EventActivity: true, Judging: true, Results: true, Marketing: true, WeeklyDigest: true, UpdatedAt: created},
 			{UserID: "participant_other", Transactional: true, AccountSecurity: true, AccountLifecycle: true, TeamActivity: true, EventActivity: true, Judging: true, Results: true, Marketing: false, UpdatedAt: created},
+		},
+		Comments: []domain.Comment{
+			{ID: "cmt_01", EventID: "evt_01", ProjectID: "prj_01", AuthorID: "participant_other", AuthorName: "Pia Teammate", Body: "The streaming demo is genuinely smooth. Nice work.", Status: domain.CommentVisible, CreatedAt: submitted, UpdatedAt: submitted},
+			{ID: "cmt_02", EventID: "evt_01", ProjectID: "prj_01", AuthorID: "organizer", AuthorName: "Rhea Organizer", Body: "Strong write-up too. Adding this to the shortlist for the demo day.", Status: domain.CommentVisible, CreatedAt: reviewed, UpdatedAt: reviewed},
+		},
+		Campaigns: []domain.VoteCampaign{
+			{ID: "cmp_01", EventID: "evt_01", Name: "Community choice", Description: "The project the community most wants to see demoed.", Status: domain.CampaignOpen, MaxChoicesPerUser: 2, RequireEligible: true, CreatedBy: "organizer", CreatedAt: submitted, OpensAt: timePtr(submitted)},
+		},
+		Ballots: []domain.Ballot{
+			{ID: "bal_01", CampaignID: "cmp_01", UserID: "participant", ProjectID: "prj_01", CreatedAt: submitted},
+			{ID: "bal_02", CampaignID: "cmp_01", UserID: "participant", ProjectID: "prj_04", CreatedAt: submitted},
+			{ID: "bal_03", CampaignID: "cmp_01", UserID: "participant_other", ProjectID: "prj_01", CreatedAt: submitted},
 		},
 		Teams: []domain.Team{
 			{ID: "tm_01", EventID: "evt_01", Scope: domain.TeamScopeHackathon, Name: "NorthKiln", Description: "A seeded team.", CaptainID: "participant", Status: domain.TeamStatusActive, Availability: domain.TeamOpenForMembers, MaxSize: 4, OpenRoles: []string{"frontend", "design"}, CreatedAt: created},
