@@ -1,0 +1,57 @@
+package auth
+
+import (
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/iSundram/codeceremony/backend/internal/seed"
+	"github.com/iSundram/codeceremony/backend/internal/store"
+)
+
+func TestSessionManagerIssuesAndRevokesSession(t *testing.T) {
+	data := store.New(seed.Default("hash"))
+	manager := NewSessionManager(time.Hour, data)
+	now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+	manager.now = func() time.Time { return now }
+	user, err := data.UserByID("participant")
+	if err != nil {
+		t.Fatalf("UserByID() error = %v", err)
+	}
+	token, err := manager.Issue(user)
+	if err != nil {
+		t.Fatalf("Issue() error = %v", err)
+	}
+	claims, err := manager.Parse(token)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if claims.Subject != user.ID || claims.SessionID == "" {
+		t.Fatalf("claims = %+v, want subject and session id", claims)
+	}
+	if len(manager.Sessions(user.ID)) != 1 {
+		t.Fatalf("session count = %d, want 1", len(manager.Sessions(user.ID)))
+	}
+	if err := manager.Revoke(claims.SessionID, "test"); err != nil {
+		t.Fatalf("Revoke() error = %v", err)
+	}
+	if _, err := manager.Parse(token); !errors.Is(err, ErrExpiredToken) {
+		t.Fatalf("revoked Parse() error = %v, want ErrExpiredToken", err)
+	}
+}
+
+func TestSessionManagerRejectsExpiredSession(t *testing.T) {
+	data := store.New(seed.Default("hash"))
+	manager := NewSessionManager(time.Hour, data)
+	now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+	manager.now = func() time.Time { return now }
+	user, _ := data.UserByID("participant")
+	token, err := manager.Issue(user)
+	if err != nil {
+		t.Fatalf("Issue() error = %v", err)
+	}
+	manager.now = func() time.Time { return now.Add(2 * time.Hour) }
+	if _, err := manager.Parse(token); !errors.Is(err, ErrExpiredToken) {
+		t.Fatalf("expired Parse() error = %v, want ErrExpiredToken", err)
+	}
+}

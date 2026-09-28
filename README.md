@@ -13,7 +13,7 @@ Implemented or being implemented in the first slice:
 - Go service under `backend/`;
 - environment-based configuration;
 - local development seed data;
-- authentication and signed session tokens;
+- authentication and store-backed revocable sessions;
 - role model and backend authorization boundaries;
 - public event and project gallery endpoints;
 - submission deadline enforcement;
@@ -21,6 +21,7 @@ Implemented or being implemented in the first slice:
 - organizer progress, results, and CSV export endpoints;
 - weighted raw scoring, within-judge normalization, and deterministic ranking;
 - initial PostgreSQL migration schema;
+- first-party My Account, session, team-role, notification, and audit endpoints;
 - health and readiness endpoints;
 - focused Go tests.
 
@@ -29,7 +30,8 @@ The full product surface is documented in:
 - [`rules.md`](rules.md) — event rules and constraints;
 - [`STRUCTURE.md`](STRUCTURE.md) — repository and technology structure;
 - [`design.md`](design.md) — light-theme design system and component contract;
-- [`FEATURES.md`](FEATURES.md) — comprehensive feature specification.
+- [`FEATURES.md`](FEATURES.md) — comprehensive feature specification;
+- [`ACCOUNT-MANAGEMENT.md`](ACCOUNT-MANAGEMENT.md) — first-party My Account, roles, sessions, teams, permissions, notifications, and SMTP decisions.
 
 ## Technology
 
@@ -73,6 +75,10 @@ docker compose up
 
 The API is available at `http://localhost:8080`. The frontend, PostgreSQL service, migrations runner, and full local portal are still pending. The Compose stack currently uses the in-memory development store and must not be presented as the final T1/T4 submission environment.
 
+## Account management
+
+CodeCeremony uses its own first-party account system. There is no Google, OIDC, OAuth, or other external identity provider. Local authentication and in-app notifications are always available. SMTP is an optional notification transport only; it is not required for login, local startup, or acceptance checks. See [`ACCOUNT-MANAGEMENT.md`](ACCOUNT-MANAGEMENT.md) for the full account, session, team-role, permission, notification, and audit contract.
+
 ## Important constraints
 
 - Keep the repository public and OSI-licensed.
@@ -84,4 +90,4 @@ The API is available at `http://localhost:8080`. The frontend, PostgreSQL servic
 
 ## License
 
-A license will be added before submission. The intended default is MIT or Apache-2.0.
+This project is licensed under the [MIT License](LICENSE). The license permits use, modification, distribution, and adoption while preserving the copyright and permission notice.

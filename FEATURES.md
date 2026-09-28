@@ -6,7 +6,7 @@
 >
 > **Scope rule:** This document defines the product surface. Implementation follows the priorities and freeze rules; scope must not expand silently.
 >
-> **Read first:** `rules.md`, `structure.md`, and `design.md`.
+> **Read first:** `rules.md`, `structure.md`, `design.md`, and `ACCOUNT-MANAGEMENT.md`.
 
 ## 1. Product decision
 
@@ -1248,3 +1248,39 @@ The intended order is:
 8. documentation and demo video throughout, not at the end.
 
 This is the comprehensive product surface. It is a decision map, not a promise to implement every P3/P4 item before the freeze.
+
+## 26. Account management expansion
+
+The complete first-party account, session, team-role, permission, notification, My Account, and SMTP decisions are maintained in [`ACCOUNT-MANAGEMENT.md`](ACCOUNT-MANAGEMENT.md). That document is normative for account behavior.
+
+### Account feature IDs
+
+| ID | Feature | Priority |
+|---|---|---|
+| F-501 | Local account states and lifecycle | P0 |
+| F-502 | Revocable server-side sessions and device management | P0 |
+| F-503 | Team member, leader, and captain roles | P1 |
+| F-504 | Team invitations, promotion, demotion, and captain transfer | P1 |
+| F-505 | Team removal, leaving, deletion request, and archive safeguards | P1 |
+| F-506 | Event-scoped organizer and moderator assignments | P2 |
+| F-507 | Admin account search, state changes, role assignment, and session revocation | P2 |
+| F-508 | Permission catalog and deny-by-default policy enforcement | P0 |
+| F-509 | Audit and security event viewer | P2 |
+| F-510 | In-app notification inbox, preferences, and activity catalog | P2 |
+| F-511 | Notification digests and mandatory security notices | P3 |
+| F-512 | First-party My Account center and account data controls | P4 |
+| F-513 | Optional SMTP outbox, templates, retries, and delivery status | P4 |
+| F-514 | Email/webhook verification and signed action links | P4 |
+| F-515 | Account export, merge, anonymization, and retention workflows | P4 |
+
+### Account decisions
+
+- Local authentication is the only identity system and remains mandatory.
+- There is no Google, OIDC, OAuth, or other external identity provider.
+- SMTP is optional mail transport only; absent SMTP leaves in-app notifications fully functional.
+- Global account types are participant, judge, organizer, admin, and explicit service identities. Visitors are unauthenticated actors.
+- Team roles are member, leader, and captain, scoped to one event team.
+- Protected actions require backend authorization and an audit event.
+- No notification or email payload may contain private judge data, unpublished results, session tokens, or secrets.
+
+These features must not displace the T1/T2 acceptance path. The current backend has local bcrypt authentication, store-backed revocable sessions, team membership roles, account session endpoints, notifications, and admin account controls.

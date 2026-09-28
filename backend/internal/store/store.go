@@ -11,27 +11,35 @@ import (
 )
 
 type Store struct {
-	mu          sync.RWMutex
-	users       map[string]domain.User
-	usersByMail map[string]string
-	events      map[string]domain.Event
-	tracks      map[string]domain.Track
-	teams       map[string]domain.Team
-	submissions map[string]domain.Submission
-	assignments map[string]domain.Assignment
-	reviews     map[string]domain.Review
+	mu            sync.RWMutex
+	users         map[string]domain.User
+	usersByMail   map[string]string
+	events        map[string]domain.Event
+	tracks        map[string]domain.Track
+	teams         map[string]domain.Team
+	memberships   map[string]domain.TeamMembership
+	submissions   map[string]domain.Submission
+	assignments   map[string]domain.Assignment
+	reviews       map[string]domain.Review
+	sessions      map[string]domain.Session
+	notifications map[string]domain.Notification
+	auditEvents   map[string]domain.AuditEvent
 }
 
 func New(data seed.Data) *Store {
 	store := &Store{
-		users:       make(map[string]domain.User, len(data.Users)),
-		usersByMail: make(map[string]string, len(data.Users)),
-		events:      make(map[string]domain.Event, len(data.Events)),
-		tracks:      make(map[string]domain.Track, len(data.Tracks)),
-		teams:       make(map[string]domain.Team, len(data.Teams)),
-		submissions: make(map[string]domain.Submission, len(data.Submissions)),
-		assignments: make(map[string]domain.Assignment, len(data.Assignments)),
-		reviews:     make(map[string]domain.Review, len(data.Reviews)),
+		users:         make(map[string]domain.User, len(data.Users)),
+		usersByMail:   make(map[string]string, len(data.Users)),
+		events:        make(map[string]domain.Event, len(data.Events)),
+		tracks:        make(map[string]domain.Track, len(data.Tracks)),
+		teams:         make(map[string]domain.Team, len(data.Teams)),
+		memberships:   make(map[string]domain.TeamMembership, len(data.TeamMemberships)),
+		submissions:   make(map[string]domain.Submission, len(data.Submissions)),
+		assignments:   make(map[string]domain.Assignment, len(data.Assignments)),
+		reviews:       make(map[string]domain.Review, len(data.Reviews)),
+		sessions:      make(map[string]domain.Session),
+		notifications: make(map[string]domain.Notification, len(data.Notifications)),
+		auditEvents:   make(map[string]domain.AuditEvent, len(data.AuditEvents)),
 	}
 	for _, user := range data.Users {
 		store.users[user.ID] = user
@@ -46,6 +54,9 @@ func New(data seed.Data) *Store {
 	for _, team := range data.Teams {
 		store.teams[team.ID] = team
 	}
+	for _, membership := range data.TeamMemberships {
+		store.memberships[membershipKey(membership.TeamID, membership.UserID)] = membership
+	}
 	for _, submission := range data.Submissions {
 		store.submissions[submission.ID] = submission
 	}
@@ -54,6 +65,12 @@ func New(data seed.Data) *Store {
 	}
 	for _, review := range data.Reviews {
 		store.reviews[reviewKey(review.JudgeID, review.ProjectID)] = review
+	}
+	for _, notification := range data.Notifications {
+		store.notifications[notification.ID] = notification
+	}
+	for _, event := range data.AuditEvents {
+		store.auditEvents[event.ID] = event
 	}
 	return store
 }
@@ -76,6 +93,82 @@ func (s *Store) UserByID(id string) (domain.User, error) {
 		return domain.User{}, domain.ErrNotFound
 	}
 	return user, nil
+}
+
+func (s *Store) ListUsers() []domain.User {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]domain.User, 0, len(s.users))
+	for _, user := range s.users {
+		result = append(result, user)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Email < result[j].Email })
+	return result
+}
+
+func (s *Store) SetUserState(id string, state domain.AccountState) error {
+	if !state.Valid() {
+		return domain.ErrValidation
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	user, ok := s.users[id]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	user.State = state
+	s.users[id] = user
+	return nil
+}
+
+func (s *Store) SetUserRole(id string, role domain.Role) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	user, ok := s.users[id]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	if !role.Valid() {
+		return domain.ErrValidation
+	}
+	user.Role = role
+	s.users[id] = user
+	return nil
+}
+
+func (s *Store) UpdateUserProfile(id string, displayName, avatarURL, bio, organization, timezone, locale string) (domain.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	user, ok := s.users[id]
+	if !ok {
+		return domain.User{}, domain.ErrNotFound
+	}
+	if strings.TrimSpace(displayName) == "" {
+		return domain.User{}, domain.ErrValidation
+	}
+	user.DisplayName = strings.TrimSpace(displayName)
+	user.AvatarURL = avatarURL
+	user.Bio = bio
+	user.Organization = organization
+	user.Timezone = timezone
+	user.Locale = locale
+	s.users[id] = user
+	return user, nil
+}
+
+func (s *Store) UpdatePasswordHash(id, hash string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.users[id]; !ok {
+		return domain.ErrNotFound
+	}
+	if hash == "" {
+		return domain.ErrValidation
+	}
+	user := s.users[id]
+	user.PasswordHash = hash
+	s.users[id] = user
+	return nil
 }
 
 func (s *Store) EventBySlug(slug string) (domain.Event, error) {
@@ -181,7 +274,11 @@ func (s *Store) CreateTeam(team domain.Team) error {
 	if team.CreatedAt.IsZero() {
 		team.CreatedAt = time.Now().UTC()
 	}
+	if team.Status == "" {
+		team.Status = domain.TeamStatusActive
+	}
 	s.teams[team.ID] = team
+	s.memberships[membershipKey(team.ID, team.CaptainID)] = domain.TeamMembership{ID: domain.NewID("tmem"), EventID: team.EventID, TeamID: team.ID, UserID: team.CaptainID, Role: domain.TeamRoleCaptain, Status: "active", JoinedAt: team.CreatedAt, UpdatedAt: team.CreatedAt}
 	return nil
 }
 
@@ -387,6 +484,316 @@ func (s *Store) AllReviews(eventID string) []domain.Review {
 	return result
 }
 
+func (s *Store) CreateSession(session domain.Session) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if session.ID == "" || session.UserID == "" || session.TokenHash == "" || session.ExpiresAt.IsZero() {
+		return domain.ErrValidation
+	}
+	if _, exists := s.sessions[session.ID]; exists {
+		return domain.ErrAlreadyExists
+	}
+	if _, exists := s.users[session.UserID]; !exists {
+		return domain.ErrNotFound
+	}
+	if session.CreatedAt.IsZero() {
+		session.CreatedAt = time.Now().UTC()
+	}
+	if session.LastSeenAt.IsZero() {
+		session.LastSeenAt = session.CreatedAt
+	}
+	s.sessions[session.ID] = session
+	return nil
+}
+
+func (s *Store) SessionByID(id string) (domain.Session, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	session, ok := s.sessions[id]
+	if !ok {
+		return domain.Session{}, domain.ErrNotFound
+	}
+	return session, nil
+}
+
+func (s *Store) SessionByTokenHash(tokenHash string) (domain.Session, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, session := range s.sessions {
+		if session.TokenHash == tokenHash {
+			return session, nil
+		}
+	}
+	return domain.Session{}, domain.ErrNotFound
+}
+
+func (s *Store) ListSessions(userID string) []domain.Session {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]domain.Session, 0)
+	for _, session := range s.sessions {
+		if session.UserID == userID {
+			result = append(result, session)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].LastSeenAt.After(result[j].LastSeenAt) })
+	return result
+}
+
+func (s *Store) TouchSession(id string, seenAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.sessions[id]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	session.LastSeenAt = seenAt.UTC()
+	s.sessions[id] = session
+	return nil
+}
+
+func (s *Store) RevokeSession(id, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.sessions[id]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	if session.RevokedAt == nil {
+		now := time.Now().UTC()
+		session.RevokedAt = &now
+		session.RevocationReason = reason
+		s.sessions[id] = session
+	}
+	return nil
+}
+
+func (s *Store) RevokeUserSessions(userID, exceptID, reason string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UTC()
+	count := 0
+	for id, session := range s.sessions {
+		if session.UserID != userID || id == exceptID || session.RevokedAt != nil {
+			continue
+		}
+		session.RevokedAt = &now
+		session.RevocationReason = reason
+		s.sessions[id] = session
+		count++
+	}
+	return count
+}
+
+func (s *Store) TeamMembership(teamID, userID string) (domain.TeamMembership, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	membership, ok := s.memberships[membershipKey(teamID, userID)]
+	if !ok {
+		return domain.TeamMembership{}, domain.ErrNotFound
+	}
+	return membership, nil
+}
+
+func (s *Store) TeamMembers(teamID string) []domain.TeamMembership {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]domain.TeamMembership, 0)
+	for _, membership := range s.memberships {
+		if membership.TeamID == teamID && membership.Status == "active" {
+			result = append(result, membership)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].UserID < result[j].UserID })
+	return result
+}
+
+func (s *Store) UpsertTeamMember(membership domain.TeamMembership) error {
+	if !membership.Role.Valid() {
+		return domain.ErrValidation
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if membership.TeamID == "" || membership.UserID == "" || membership.EventID == "" {
+		return domain.ErrValidation
+	}
+	if _, exists := s.teams[membership.TeamID]; !exists {
+		return domain.ErrNotFound
+	}
+	if _, exists := s.users[membership.UserID]; !exists {
+		return domain.ErrNotFound
+	}
+	if membership.ID == "" {
+		membership.ID = domain.NewID("tmem")
+	}
+	if membership.JoinedAt.IsZero() {
+		membership.JoinedAt = time.Now().UTC()
+	}
+	membership.UpdatedAt = time.Now().UTC()
+	s.memberships[membershipKey(membership.TeamID, membership.UserID)] = membership
+	return nil
+}
+
+func (s *Store) SetTeamMemberRole(teamID, userID string, role domain.TeamRole) error {
+	if !role.Valid() {
+		return domain.ErrValidation
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	membership, ok := s.memberships[membershipKey(teamID, userID)]
+	if !ok || membership.Status != "active" {
+		return domain.ErrNotFound
+	}
+	membership.Role = role
+	membership.UpdatedAt = time.Now().UTC()
+	s.memberships[membershipKey(teamID, userID)] = membership
+	return nil
+}
+
+func (s *Store) TransferTeamCaptaincy(teamID, currentCaptainID, nextCaptainID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	team, ok := s.teams[teamID]
+	if !ok || team.Status != domain.TeamStatusActive || team.CaptainID != currentCaptainID {
+		return domain.ErrForbidden
+	}
+	membership, ok := s.memberships[membershipKey(teamID, nextCaptainID)]
+	if !ok || membership.Status != "active" {
+		return domain.ErrNotFound
+	}
+	team.CaptainID = nextCaptainID
+	s.teams[teamID] = team
+	membership.Role = domain.TeamRoleCaptain
+	membership.UpdatedAt = time.Now().UTC()
+	s.memberships[membershipKey(teamID, nextCaptainID)] = membership
+	old, ok := s.memberships[membershipKey(teamID, currentCaptainID)]
+	if ok {
+		old.Role = domain.TeamRoleLeader
+		old.UpdatedAt = time.Now().UTC()
+		s.memberships[membershipKey(teamID, currentCaptainID)] = old
+	}
+	return nil
+}
+
+func (s *Store) RemoveTeamMember(teamID, userID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	team, ok := s.teams[teamID]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	if team.CaptainID == userID {
+		return domain.ErrConflict
+	}
+	membership, ok := s.memberships[membershipKey(teamID, userID)]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	now := time.Now().UTC()
+	membership.Status = "removed"
+	membership.LeftAt = &now
+	membership.UpdatedAt = now
+	s.memberships[membershipKey(teamID, userID)] = membership
+	return nil
+}
+
+func (s *Store) ArchiveTeam(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	team, ok := s.teams[id]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	now := time.Now().UTC()
+	team.Status = domain.TeamStatusArchived
+	team.DeletedAt = &now
+	s.teams[id] = team
+	for key, membership := range s.memberships {
+		if membership.TeamID != id || membership.Status != "active" {
+			continue
+		}
+		membership.Status = "removed"
+		membership.LeftAt = &now
+		membership.UpdatedAt = now
+		s.memberships[key] = membership
+	}
+	return nil
+}
+
+func (s *Store) CreateNotification(notification domain.Notification) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if notification.ID == "" {
+		notification.ID = domain.NewID("ntf")
+	}
+	if notification.UserID == "" || notification.Title == "" {
+		return domain.ErrValidation
+	}
+	if _, exists := s.users[notification.UserID]; !exists {
+		return domain.ErrNotFound
+	}
+	if notification.CreatedAt.IsZero() {
+		notification.CreatedAt = time.Now().UTC()
+	}
+	s.notifications[notification.ID] = notification
+	return nil
+}
+
+func (s *Store) ListNotifications(userID string) []domain.Notification {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]domain.Notification, 0)
+	for _, notification := range s.notifications {
+		if notification.UserID == userID {
+			result = append(result, notification)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].CreatedAt.After(result[j].CreatedAt) })
+	return result
+}
+
+func (s *Store) MarkNotificationRead(userID, notificationID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	notification, ok := s.notifications[notificationID]
+	if !ok || notification.UserID != userID {
+		return domain.ErrNotFound
+	}
+	now := time.Now().UTC()
+	notification.ReadAt = &now
+	s.notifications[notificationID] = notification
+	return nil
+}
+
+func (s *Store) RecordAudit(event domain.AuditEvent) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if event.ID == "" {
+		event.ID = domain.NewID("aud")
+	}
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = time.Now().UTC()
+	}
+	if event.Action == "" {
+		return domain.ErrValidation
+	}
+	s.auditEvents[event.ID] = event
+	return nil
+}
+
+func (s *Store) ListAudit(eventID string) []domain.AuditEvent {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]domain.AuditEvent, 0)
+	for _, event := range s.auditEvents {
+		if eventID == "" || event.EventID == eventID {
+			result = append(result, event)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].CreatedAt.Before(result[j].CreatedAt) })
+	return result
+}
+
 func isPublicSubmission(status domain.SubmissionStatus) bool {
 	return status == domain.SubmissionSubmitted || status == domain.SubmissionLocked
 }
@@ -403,6 +810,10 @@ func submissionMatches(submission domain.Submission, query string) bool {
 
 func reviewKey(judgeID, projectID string) string {
 	return judgeID + ":" + projectID
+}
+
+func membershipKey(teamID, userID string) string {
+	return teamID + ":" + userID
 }
 
 func cloneSubmission(submission domain.Submission) domain.Submission {

@@ -8,12 +8,13 @@ import (
 	"github.com/iSundram/codeceremony/backend/internal/domain"
 )
 
-const SessionCookieName = "cc_session"
+const SessionCookieName = "session"
 
 type Principal struct {
-	UserID string
-	Email  string
-	Role   domain.Role
+	UserID    string
+	Email     string
+	Role      domain.Role
+	SessionID string
 }
 
 type contextKey struct{}

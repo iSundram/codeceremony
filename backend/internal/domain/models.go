@@ -3,12 +3,18 @@ package domain
 import "time"
 
 type User struct {
-	ID           string    `json:"id"`
-	Email        string    `json:"email"`
-	DisplayName  string    `json:"display_name"`
-	Role         Role      `json:"role"`
-	PasswordHash string    `json:"-"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID           string       `json:"id"`
+	Email        string       `json:"email"`
+	DisplayName  string       `json:"display_name"`
+	AvatarURL    string       `json:"avatar_url,omitempty"`
+	Bio          string       `json:"bio,omitempty"`
+	Organization string       `json:"organization,omitempty"`
+	Timezone     string       `json:"timezone,omitempty"`
+	Locale       string       `json:"locale,omitempty"`
+	Role         Role         `json:"role"`
+	State        AccountState `json:"state"`
+	PasswordHash string       `json:"-"`
+	CreatedAt    time.Time    `json:"created_at"`
 }
 
 type Track struct {
@@ -32,12 +38,14 @@ type Event struct {
 }
 
 type Team struct {
-	ID          string    `json:"id"`
-	EventID     string    `json:"event_id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	CaptainID   string    `json:"captain_id"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID          string     `json:"id"`
+	EventID     string     `json:"event_id"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	CaptainID   string     `json:"captain_id"`
+	Status      TeamStatus `json:"status"`
+	CreatedAt   time.Time  `json:"created_at"`
+	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
 }
 
 type SubmissionStatus string

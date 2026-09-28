@@ -33,7 +33,7 @@ func main() {
 		os.Exit(1)
 	}
 	data := store.New(seed.Default(passwordHash))
-	tokens := auth.NewManager(cfg.SessionSecret, time.Duration(cfg.SessionTTLHours)*time.Hour)
+	tokens := auth.NewSessionManager(time.Duration(cfg.SessionTTLHours)*time.Hour, data)
 	api := httpapi.New(cfg, data, tokens, logger)
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -66,7 +66,7 @@ func main() {
 	}
 }
 
-func printDevelopmentIdentities(data *store.Store, tokens *auth.Manager, logger *slog.Logger) {
+func printDevelopmentIdentities(data *store.Store, tokens auth.TokenIssuer, logger *slog.Logger) {
 	identities := []struct {
 		label string
 		id    string

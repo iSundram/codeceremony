@@ -15,18 +15,26 @@ const (
 type Permission string
 
 const (
-	PermissionViewOwnScores    Permission = "view_own_scores"
-	PermissionViewPeerScores   Permission = "view_peer_scores"
-	PermissionSubmitProject    Permission = "submit_project"
-	PermissionReviewProject    Permission = "review_project"
-	PermissionManageEvent      Permission = "manage_event"
-	PermissionExportData       Permission = "export_data"
-	PermissionViewAudit        Permission = "view_audit"
-	PermissionManagePlatform   Permission = "manage_platform"
-	PermissionVote             Permission = "vote"
-	PermissionComment          Permission = "comment"
-	PermissionManageSubmission Permission = "manage_submission"
-	PermissionManageTeam       Permission = "manage_team"
+	PermissionViewOwnScores        Permission = "view_own_scores"
+	PermissionViewPeerScores       Permission = "view_peer_scores"
+	PermissionSubmitProject        Permission = "submit_project"
+	PermissionReviewProject        Permission = "review_project"
+	PermissionManageEvent          Permission = "manage_event"
+	PermissionExportData           Permission = "export_data"
+	PermissionViewAudit            Permission = "view_audit"
+	PermissionManagePlatform       Permission = "manage_platform"
+	PermissionVote                 Permission = "vote"
+	PermissionComment              Permission = "comment"
+	PermissionManageSubmission     Permission = "manage_submission"
+	PermissionManageTeam           Permission = "manage_team"
+	PermissionViewOwnSessions      Permission = "view_own_sessions"
+	PermissionRevokeOwnSession     Permission = "revoke_own_session"
+	PermissionViewAnySessions      Permission = "view_any_sessions"
+	PermissionManageRoles          Permission = "manage_roles"
+	PermissionViewOwnNotifications Permission = "view_own_notifications"
+	PermissionManageNotifications  Permission = "manage_notifications"
+	PermissionManageIntegrations   Permission = "manage_integrations"
+	PermissionManageSelf           Permission = "manage_self"
 )
 
 var validRoles = map[Role]struct{}{
@@ -40,37 +48,60 @@ var validRoles = map[Role]struct{}{
 var rolePermissions = map[Role]map[Permission]struct{}{
 	RoleVisitor: {},
 	RoleParticipant: {
-		PermissionSubmitProject: {},
-		PermissionManageTeam:    {},
-		PermissionVote:          {},
-		PermissionComment:       {},
+		PermissionSubmitProject:        {},
+		PermissionManageTeam:           {},
+		PermissionVote:                 {},
+		PermissionComment:              {},
+		PermissionManageSelf:           {},
+		PermissionViewOwnSessions:      {},
+		PermissionRevokeOwnSession:     {},
+		PermissionViewOwnNotifications: {},
 	},
 	RoleJudge: {
-		PermissionViewOwnScores: {},
-		PermissionReviewProject: {},
+		PermissionViewOwnScores:        {},
+		PermissionReviewProject:        {},
+		PermissionManageSelf:           {},
+		PermissionViewOwnSessions:      {},
+		PermissionRevokeOwnSession:     {},
+		PermissionViewOwnNotifications: {},
 	},
 	RoleOrganizer: {
-		PermissionViewOwnScores:    {},
-		PermissionViewPeerScores:   {},
-		PermissionManageEvent:      {},
-		PermissionExportData:       {},
-		PermissionViewAudit:        {},
-		PermissionManageSubmission: {},
-		PermissionManageTeam:       {},
-		PermissionVote:             {},
-		PermissionComment:          {},
+		PermissionViewOwnScores:        {},
+		PermissionViewPeerScores:       {},
+		PermissionManageEvent:          {},
+		PermissionExportData:           {},
+		PermissionViewAudit:            {},
+		PermissionManageSubmission:     {},
+		PermissionManageTeam:           {},
+		PermissionManageSelf:           {},
+		PermissionViewOwnSessions:      {},
+		PermissionRevokeOwnSession:     {},
+		PermissionViewAnySessions:      {},
+		PermissionManageRoles:          {},
+		PermissionViewOwnNotifications: {},
+		PermissionManageNotifications:  {},
+		PermissionVote:                 {},
+		PermissionComment:              {},
 	},
 	RoleAdmin: {
-		PermissionViewOwnScores:    {},
-		PermissionViewPeerScores:   {},
-		PermissionManageEvent:      {},
-		PermissionExportData:       {},
-		PermissionViewAudit:        {},
-		PermissionManagePlatform:   {},
-		PermissionManageSubmission: {},
-		PermissionManageTeam:       {},
-		PermissionVote:             {},
-		PermissionComment:          {},
+		PermissionViewOwnScores:        {},
+		PermissionViewPeerScores:       {},
+		PermissionManageEvent:          {},
+		PermissionExportData:           {},
+		PermissionViewAudit:            {},
+		PermissionManagePlatform:       {},
+		PermissionManageSubmission:     {},
+		PermissionManageTeam:           {},
+		PermissionManageSelf:           {},
+		PermissionViewOwnSessions:      {},
+		PermissionRevokeOwnSession:     {},
+		PermissionViewAnySessions:      {},
+		PermissionManageRoles:          {},
+		PermissionViewOwnNotifications: {},
+		PermissionManageNotifications:  {},
+		PermissionManageIntegrations:   {},
+		PermissionVote:                 {},
+		PermissionComment:              {},
 	},
 }
 

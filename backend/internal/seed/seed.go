@@ -7,13 +7,16 @@ import (
 )
 
 type Data struct {
-	Users       []domain.User
-	Events      []domain.Event
-	Tracks      []domain.Track
-	Teams       []domain.Team
-	Submissions []domain.Submission
-	Assignments []domain.Assignment
-	Reviews     []domain.Review
+	Users           []domain.User
+	Events          []domain.Event
+	Tracks          []domain.Track
+	Teams           []domain.Team
+	TeamMemberships []domain.TeamMembership
+	Submissions     []domain.Submission
+	Assignments     []domain.Assignment
+	Reviews         []domain.Review
+	Notifications   []domain.Notification
+	AuditEvents     []domain.AuditEvent
 }
 
 func Default(passwordHash string) Data {
@@ -24,11 +27,12 @@ func Default(passwordHash string) Data {
 
 	return Data{
 		Users: []domain.User{
-			{ID: "organizer", Email: "organizer@example.org", DisplayName: "Rhea Organizer", Role: domain.RoleOrganizer, PasswordHash: passwordHash, CreatedAt: created},
-			{ID: "judge_a", Email: "judge-a@example.org", DisplayName: "Judge A", Role: domain.RoleJudge, PasswordHash: passwordHash, CreatedAt: created},
-			{ID: "judge_b", Email: "judge-b@example.org", DisplayName: "Judge B", Role: domain.RoleJudge, PasswordHash: passwordHash, CreatedAt: created},
-			{ID: "participant", Email: "participant@example.org", DisplayName: "Pia Participant", Role: domain.RoleParticipant, PasswordHash: passwordHash, CreatedAt: created},
-			{ID: "admin", Email: "admin@example.org", DisplayName: "Ari Admin", Role: domain.RoleAdmin, PasswordHash: passwordHash, CreatedAt: created},
+			{ID: "organizer", Email: "organizer@example.org", DisplayName: "Rhea Organizer", Role: domain.RoleOrganizer, State: domain.AccountActive, PasswordHash: passwordHash, CreatedAt: created},
+			{ID: "judge_a", Email: "judge-a@example.org", DisplayName: "Judge A", Role: domain.RoleJudge, State: domain.AccountActive, PasswordHash: passwordHash, CreatedAt: created},
+			{ID: "judge_b", Email: "judge-b@example.org", DisplayName: "Judge B", Role: domain.RoleJudge, State: domain.AccountActive, PasswordHash: passwordHash, CreatedAt: created},
+			{ID: "participant", Email: "participant@example.org", DisplayName: "Pia Participant", Role: domain.RoleParticipant, State: domain.AccountActive, PasswordHash: passwordHash, CreatedAt: created},
+			{ID: "participant_other", Email: "participant-other@example.org", DisplayName: "Pia Teammate", Role: domain.RoleParticipant, State: domain.AccountActive, PasswordHash: passwordHash, CreatedAt: created},
+			{ID: "admin", Email: "admin@example.org", DisplayName: "Ari Admin", Role: domain.RoleAdmin, State: domain.AccountActive, PasswordHash: passwordHash, CreatedAt: created},
 		},
 		Events: []domain.Event{{
 			ID:               "evt_01",
@@ -48,8 +52,13 @@ func Default(passwordHash string) Data {
 			{ID: "trk_03", Event: "evt_01", Name: "Accessibility", Slug: "accessibility"},
 		},
 		Teams: []domain.Team{
-			{ID: "tm_01", EventID: "evt_01", Name: "NorthKiln", Description: "A seeded team.", CaptainID: "participant", CreatedAt: created},
-			{ID: "tm_02", EventID: "evt_01", Name: "LoudQuarry", Description: "A seeded team.", CaptainID: "participant", CreatedAt: created},
+			{ID: "tm_01", EventID: "evt_01", Name: "NorthKiln", Description: "A seeded team.", CaptainID: "participant", Status: domain.TeamStatusActive, CreatedAt: created},
+			{ID: "tm_02", EventID: "evt_01", Name: "LoudQuarry", Description: "A seeded team.", CaptainID: "participant", Status: domain.TeamStatusActive, CreatedAt: created},
+		},
+		TeamMemberships: []domain.TeamMembership{
+			{ID: "tmem_01", EventID: "evt_01", TeamID: "tm_01", UserID: "participant", Role: domain.TeamRoleCaptain, Status: "active", JoinedAt: created, UpdatedAt: created},
+			{ID: "tmem_02", EventID: "evt_01", TeamID: "tm_02", UserID: "participant", Role: domain.TeamRoleCaptain, Status: "active", JoinedAt: created, UpdatedAt: created},
+			{ID: "tmem_03", EventID: "evt_01", TeamID: "tm_01", UserID: "participant_other", Role: domain.TeamRoleMember, Status: "active", JoinedAt: created, UpdatedAt: created},
 		},
 		Submissions: []domain.Submission{
 			{

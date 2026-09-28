@@ -44,3 +44,28 @@ func TestLoadParsesSeedFlag(t *testing.T) {
 		t.Fatal("SeedDemoData = true, want false")
 	}
 }
+
+func TestSMTPConfigurationIsOptionalAndParsed(t *testing.T) {
+	t.Setenv("SMTP_HOST", "smtp.example.org")
+	t.Setenv("SMTP_FROM", "noreply@example.org")
+	t.Setenv("SMTP_PORT", "2525")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.SMTPConfigured() {
+		t.Fatal("SMTPConfigured() = false, want true")
+	}
+	if cfg.SMTPPort != 2525 {
+		t.Fatalf("SMTPPort = %d, want 2525", cfg.SMTPPort)
+	}
+}
+
+func TestLoadRejectsInvalidSMTPPort(t *testing.T) {
+	t.Setenv("SMTP_PORT", "not-a-port")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() error = nil, want SMTP port error")
+	}
+}

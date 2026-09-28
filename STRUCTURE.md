@@ -106,12 +106,14 @@ codeceremony/
 ├── ARCHITECTURE.md
 ├── DATA-MODEL.md
 ├── JUDGING.md
+├── ACCOUNT-MANAGEMENT.md
+├── FEATURES.md
 ├── acceptance-report.txt
 ├── .dogfood.toml
 └── LICENSE
 ```
 
-The root-level `ARCHITECTURE.md`, `DATA-MODEL.md`, `JUDGING.md`, `README.md`, `acceptance-report.txt`, `.dogfood.toml`, `docker-compose.yml`, and `LICENSE` are required by the hackathon brief. The directories above describe where supporting code and documentation may live; they do not imply that every file must exist immediately.
+The root-level `ARCHITECTURE.md`, `DATA-MODEL.md`, `JUDGING.md`, `README.md`, `ACCOUNT-MANAGEMENT.md`, `FEATURES.md`, `acceptance-report.txt`, `.dogfood.toml`, `docker-compose.yml`, and `LICENSE` are required or normative project documents. The directories above describe where supporting code and documentation may live; they do not imply that every file must exist immediately.
 
 ## 4. Application boundaries
 

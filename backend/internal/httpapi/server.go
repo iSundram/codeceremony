@@ -17,12 +17,12 @@ import (
 type Server struct {
 	cfg    config.Config
 	store  *store.Store
-	tokens *auth.Manager
+	tokens auth.TokenIssuer
 	now    func() time.Time
 	logger *slog.Logger
 }
 
-func New(cfg config.Config, data *store.Store, tokens *auth.Manager, logger *slog.Logger) *Server {
+func New(cfg config.Config, data *store.Store, tokens auth.TokenIssuer, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -41,13 +41,33 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /readyz", s.ready)
 	mux.HandleFunc("POST /v1/auth/login", s.login)
 	mux.HandleFunc("POST /v1/auth/logout", s.logout)
+	mux.HandleFunc("GET /v1/auth/methods", s.authMethods)
 	mux.Handle("GET /v1/me", s.requirePermission("", s.me))
+	mux.Handle("GET /v1/account/profile", s.requirePermission(domain.PermissionManageSelf, s.profile))
+	mux.Handle("PATCH /v1/account/profile", s.requirePermission(domain.PermissionManageSelf, s.updateProfile))
+	mux.Handle("POST /v1/account/password", s.requirePermission(domain.PermissionManageSelf, s.changePassword))
+	mux.Handle("GET /v1/account/sessions", s.requirePermission(domain.PermissionViewOwnSessions, s.listSessions))
+	mux.Handle("DELETE /v1/account/sessions/{sessionID}", s.requirePermission(domain.PermissionRevokeOwnSession, s.revokeSession))
+	mux.Handle("POST /v1/account/sessions/revoke-others", s.requirePermission(domain.PermissionRevokeOwnSession, s.revokeOtherSessions))
+	mux.Handle("GET /v1/notifications", s.requirePermission(domain.PermissionViewOwnNotifications, s.listNotifications))
+	mux.Handle("POST /v1/notifications/{notificationID}/read", s.requirePermission(domain.PermissionViewOwnNotifications, s.markNotificationRead))
+	mux.Handle("GET /v1/admin/users", s.requirePermission(domain.PermissionManagePlatform, s.adminListUsers))
+	mux.Handle("PATCH /v1/admin/users/{userID}/state", s.requirePermission(domain.PermissionManagePlatform, s.adminUpdateUserState))
+	mux.Handle("PUT /v1/admin/users/{userID}/role", s.requirePermission(domain.PermissionManagePlatform, s.adminUpdateUserRole))
+	mux.Handle("POST /v1/admin/users/{userID}/sessions/revoke", s.requirePermission(domain.PermissionManagePlatform, s.adminRevokeUserSessions))
+	mux.Handle("GET /v1/admin/audit", s.requirePermission(domain.PermissionManagePlatform, s.adminAudit))
 	mux.HandleFunc("GET /v1/events", s.listEvents)
 	mux.Handle("POST /v1/events", s.requirePermission(domain.PermissionManageEvent, s.createEvent))
 	mux.HandleFunc("GET /v1/events/{slug}", s.event)
 	mux.HandleFunc("GET /v1/events/{slug}/projects", s.projects)
 	mux.HandleFunc("GET /v1/events/{slug}/teams", s.listTeams)
 	mux.Handle("POST /v1/events/{slug}/teams", s.requirePermission(domain.PermissionManageTeam, s.createTeam))
+	mux.Handle("GET /v1/teams/{teamID}/members", s.requirePermission(domain.PermissionManageTeam, s.listTeamMembers))
+	mux.Handle("POST /v1/teams/{teamID}/members/{userID}/promote", s.requirePermission(domain.PermissionManageTeam, s.promoteMember))
+	mux.Handle("POST /v1/teams/{teamID}/members/{userID}/demote", s.requirePermission(domain.PermissionManageTeam, s.demoteMember))
+	mux.Handle("POST /v1/teams/{teamID}/transfer", s.requirePermission(domain.PermissionManageTeam, s.transferCaptaincy))
+	mux.Handle("DELETE /v1/teams/{teamID}/members/{userID}", s.requirePermission(domain.PermissionManageTeam, s.removeMember))
+	mux.Handle("DELETE /v1/teams/{teamID}", s.requirePermission(domain.PermissionManageTeam, s.deleteTeam))
 	mux.Handle("POST /v1/events/{slug}/submissions", s.requirePermission(domain.PermissionSubmitProject, s.createSubmission))
 	mux.Handle("GET /v1/judge/scores", s.requirePermission(domain.PermissionViewOwnScores, s.judgeScores))
 	mux.Handle("PUT /v1/judge/projects/{projectID}/review", s.requirePermission(domain.PermissionReviewProject, s.saveReview))
@@ -109,11 +129,15 @@ func (s *Server) requirePermission(permission domain.Permission, next http.Handl
 			writeError(w, http.StatusUnauthorized, "unauthorized", "the session user no longer exists")
 			return
 		}
+		if user.State != "" && user.State != domain.AccountActive {
+			writeError(w, http.StatusUnauthorized, "account_unavailable", "the account is not active")
+			return
+		}
 		if permission != "" && !user.Role.Can(permission) {
 			writeError(w, http.StatusForbidden, "forbidden", "the current role cannot perform this action")
 			return
 		}
-		principal := auth.Principal{UserID: user.ID, Email: user.Email, Role: user.Role}
+		principal := auth.Principal{UserID: user.ID, Email: user.Email, Role: user.Role, SessionID: claims.SessionID}
 		ctx := auth.WithPrincipal(r.Context(), principal)
 		next(w, r.WithContext(ctx))
 	})
@@ -252,8 +276,8 @@ func (s *Server) createSubmission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	team, err := s.store.TeamByID(request.TeamID)
-	if err != nil || team.EventID != event.ID {
-		writeError(w, http.StatusUnprocessableEntity, "validation_error", "a valid team for this event is required")
+	if err != nil || team.EventID != event.ID || team.Status != domain.TeamStatusActive {
+		writeError(w, http.StatusUnprocessableEntity, "validation_error", "a valid active team for this event is required")
 		return
 	}
 	if !s.store.IsTeamCaptain(principal.UserID, team.ID) {

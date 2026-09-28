@@ -24,6 +24,7 @@ type Claims struct {
 	IssuedAt  int64       `json:"iat"`
 	ExpiresAt int64       `json:"exp"`
 	Version   int         `json:"v"`
+	SessionID string      `json:"sid,omitempty"`
 }
 
 type Manager struct {

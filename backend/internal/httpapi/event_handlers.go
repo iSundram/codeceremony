@@ -63,7 +63,14 @@ func (s *Server) listTeams(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "event not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": s.store.ListTeams(event.ID)})
+	teams := s.store.ListTeams(event.ID)
+	activeTeams := make([]domain.Team, 0, len(teams))
+	for _, team := range teams {
+		if team.Status == domain.TeamStatusActive {
+			activeTeams = append(activeTeams, team)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": activeTeams})
 }
 
 func (s *Server) createTeam(w http.ResponseWriter, r *http.Request) {
