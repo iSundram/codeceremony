@@ -43,8 +43,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/auth/logout", s.logout)
 	mux.Handle("GET /v1/me", s.requirePermission("", s.me))
 	mux.HandleFunc("GET /v1/events", s.listEvents)
+	mux.Handle("POST /v1/events", s.requirePermission(domain.PermissionManageEvent, s.createEvent))
 	mux.HandleFunc("GET /v1/events/{slug}", s.event)
 	mux.HandleFunc("GET /v1/events/{slug}/projects", s.projects)
+	mux.HandleFunc("GET /v1/events/{slug}/teams", s.listTeams)
+	mux.Handle("POST /v1/events/{slug}/teams", s.requirePermission(domain.PermissionManageTeam, s.createTeam))
 	mux.Handle("POST /v1/events/{slug}/submissions", s.requirePermission(domain.PermissionSubmitProject, s.createSubmission))
 	mux.Handle("GET /v1/judge/scores", s.requirePermission(domain.PermissionViewOwnScores, s.judgeScores))
 	mux.Handle("PUT /v1/judge/projects/{projectID}/review", s.requirePermission(domain.PermissionReviewProject, s.saveReview))
@@ -253,6 +256,10 @@ func (s *Server) createSubmission(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "validation_error", "a valid team for this event is required")
 		return
 	}
+	if !s.store.IsTeamCaptain(principal.UserID, team.ID) {
+		writeError(w, http.StatusForbidden, "forbidden", "only a team captain can submit for this team")
+		return
+	}
 	if _, err := s.store.TrackByID(request.TrackID); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "validation_error", "a valid track is required")
 		return
@@ -284,7 +291,6 @@ func (s *Server) createSubmission(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "validation_error", "submission could not be created")
 		return
 	}
-	_ = principal
 	writeJSON(w, http.StatusCreated, map[string]any{"data": submission})
 }
 

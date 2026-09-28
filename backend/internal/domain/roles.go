@@ -26,6 +26,7 @@ const (
 	PermissionVote             Permission = "vote"
 	PermissionComment          Permission = "comment"
 	PermissionManageSubmission Permission = "manage_submission"
+	PermissionManageTeam       Permission = "manage_team"
 )
 
 var validRoles = map[Role]struct{}{
@@ -40,6 +41,7 @@ var rolePermissions = map[Role]map[Permission]struct{}{
 	RoleVisitor: {},
 	RoleParticipant: {
 		PermissionSubmitProject: {},
+		PermissionManageTeam:    {},
 		PermissionVote:          {},
 		PermissionComment:       {},
 	},
@@ -54,6 +56,7 @@ var rolePermissions = map[Role]map[Permission]struct{}{
 		PermissionExportData:       {},
 		PermissionViewAudit:        {},
 		PermissionManageSubmission: {},
+		PermissionManageTeam:       {},
 		PermissionVote:             {},
 		PermissionComment:          {},
 	},
@@ -65,6 +68,7 @@ var rolePermissions = map[Role]map[Permission]struct{}{
 		PermissionViewAudit:        {},
 		PermissionManagePlatform:   {},
 		PermissionManageSubmission: {},
+		PermissionManageTeam:       {},
 		PermissionVote:             {},
 		PermissionComment:          {},
 	},

@@ -115,6 +115,27 @@ func (s *Store) ListEvents() []domain.Event {
 	return result
 }
 
+func (s *Store) CreateEvent(event domain.Event) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if event.ID == "" {
+		event.ID = domain.NewID("evt")
+	}
+	if event.Slug == "" || event.Name == "" || event.SubmissionsClose.IsZero() {
+		return domain.ErrValidation
+	}
+	for _, existing := range s.events {
+		if existing.Slug == event.Slug {
+			return domain.ErrAlreadyExists
+		}
+	}
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = time.Now().UTC()
+	}
+	s.events[event.ID] = event
+	return nil
+}
+
 func (s *Store) TrackByID(id string) (domain.Track, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -133,6 +154,53 @@ func (s *Store) TeamByID(id string) (domain.Team, error) {
 		return domain.Team{}, domain.ErrNotFound
 	}
 	return team, nil
+}
+
+func (s *Store) IsTeamCaptain(userID, teamID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	team, ok := s.teams[teamID]
+	return ok && team.CaptainID == userID
+}
+
+func (s *Store) CreateTeam(team domain.Team) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if team.ID == "" {
+		team.ID = domain.NewID("tm")
+	}
+	if team.EventID == "" || team.Name == "" || team.CaptainID == "" {
+		return domain.ErrValidation
+	}
+	if _, ok := s.events[team.EventID]; !ok {
+		return domain.ErrNotFound
+	}
+	if _, ok := s.users[team.CaptainID]; !ok {
+		return domain.ErrNotFound
+	}
+	if team.CreatedAt.IsZero() {
+		team.CreatedAt = time.Now().UTC()
+	}
+	s.teams[team.ID] = team
+	return nil
+}
+
+func (s *Store) ListTeams(eventID string) []domain.Team {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]domain.Team, 0)
+	for _, team := range s.teams {
+		if team.EventID == eventID {
+			result = append(result, team)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Name == result[j].Name {
+			return result[i].ID < result[j].ID
+		}
+		return result[i].Name < result[j].Name
+	})
+	return result
 }
 
 func (s *Store) SubmissionByID(id string) (domain.Submission, error) {

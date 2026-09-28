@@ -178,3 +178,30 @@ func TestPublicEventListIsSeeded(t *testing.T) {
 		t.Fatalf("event list missing seeded slug: %s", response.Body.String())
 	}
 }
+
+func TestParticipantCreatesTeam(t *testing.T) {
+	server, tokens, data := newTestServer(t)
+	response := request(t, server, http.MethodPost, "/v1/events/sample-hack-2026/teams", tokenFor(t, tokens, data, "participant"), map[string]any{
+		"name":        "New Team",
+		"description": "Created during a test.",
+	})
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestOrganizerCreatesEvent(t *testing.T) {
+	server, tokens, data := newTestServer(t)
+	response := request(t, server, http.MethodPost, "/v1/events", tokenFor(t, tokens, data, "organizer"), map[string]any{
+		"slug":              "new-event",
+		"name":              "New Event",
+		"description":       "Created during a test.",
+		"timezone":          "UTC",
+		"registration_open": true,
+		"submissions_open":  true,
+		"submissions_close": "2026-03-03T18:00:00Z",
+	})
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201: %s", response.Code, response.Body.String())
+	}
+}
