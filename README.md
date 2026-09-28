@@ -63,15 +63,15 @@ go test ./...
 
 The service is not yet a complete organizer portal. The current store is an in-memory development implementation behind a persistence boundary; PostgreSQL wiring and the full UI remain unfinished. This is a foundation for the T1/T2 path, not a finished submission.
 
-## Planned startup
+## Container startup
 
-The intended event entry point will be:
+The current WIP Compose stack starts the Go API with deterministic seed data:
 
 ```bash
 docker compose up
 ```
 
-The Compose stack must eventually provide the API, frontend, local database, migrations, and deterministic fixture seeding without cloud accounts or hosted services.
+The API is available at `http://localhost:8080`. The frontend, PostgreSQL service, migrations runner, and full local portal are still pending. The Compose stack currently uses the in-memory development store and must not be presented as the final T1/T4 submission environment.
 
 ## Important constraints
 

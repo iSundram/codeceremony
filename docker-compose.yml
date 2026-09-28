@@ -1,0 +1,13 @@
+services:
+  api:
+    build:
+      context: ./backend
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      HTTP_ADDR: :8080
+      SESSION_SECRET: ${SESSION_SECRET:-codeceremony-local-compose-secret-change-me}
+      ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-http://localhost:3000}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-true}
+      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-12}
+    ports:
+      - "${CODE_CEREMONY_PORT:-8080}:8080"

@@ -48,6 +48,7 @@ codeceremony/
 │   │   ├── httpapi/
 │   │   ├── seed/
 │   │   └── store/
+│   ├── migrations/
 │   ├── go.mod
 │   ├── go.sum
 │   └── Dockerfile
