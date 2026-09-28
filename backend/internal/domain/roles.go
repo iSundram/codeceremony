@@ -36,6 +36,9 @@ const (
 	PermissionManageIntegrations   Permission = "manage_integrations"
 	PermissionManageSelf           Permission = "manage_self"
 	PermissionCancelDeletion       Permission = "cancel_deletion"
+	PermissionViewAssignments      Permission = "view_assignments"
+	PermissionManageAssignments    Permission = "manage_assignments"
+	PermissionDeclareConflict      Permission = "declare_conflict"
 )
 
 var validRoles = map[Role]struct{}{
@@ -62,6 +65,8 @@ var rolePermissions = map[Role]map[Permission]struct{}{
 	RoleJudge: {
 		PermissionViewOwnScores:        {},
 		PermissionReviewProject:        {},
+		PermissionViewAssignments:      {},
+		PermissionDeclareConflict:      {},
 		PermissionManageSelf:           {},
 		PermissionCancelDeletion:       {},
 		PermissionViewOwnSessions:      {},
@@ -72,6 +77,8 @@ var rolePermissions = map[Role]map[Permission]struct{}{
 		PermissionViewOwnScores:        {},
 		PermissionViewPeerScores:       {},
 		PermissionManageEvent:          {},
+		PermissionViewAssignments:      {},
+		PermissionManageAssignments:    {},
 		PermissionExportData:           {},
 		PermissionViewAudit:            {},
 		PermissionManageSubmission:     {},
@@ -91,6 +98,8 @@ var rolePermissions = map[Role]map[Permission]struct{}{
 		PermissionViewOwnScores:        {},
 		PermissionViewPeerScores:       {},
 		PermissionManageEvent:          {},
+		PermissionViewAssignments:      {},
+		PermissionManageAssignments:    {},
 		PermissionExportData:           {},
 		PermissionViewAudit:            {},
 		PermissionManagePlatform:       {},

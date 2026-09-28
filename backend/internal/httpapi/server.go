@@ -63,6 +63,10 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /v1/events", s.requirePermission(domain.PermissionManageEvent, s.createEvent))
 	mux.HandleFunc("GET /v1/events/{slug}", s.event)
 	mux.HandleFunc("GET /v1/events/{slug}/projects", s.projects)
+	mux.HandleFunc("GET /v1/events/{slug}/tracks", s.listTracks)
+	mux.Handle("POST /v1/events/{slug}/tracks", s.requirePermission(domain.PermissionManageEvent, s.createTrack))
+	mux.HandleFunc("GET /v1/events/{slug}/prizes", s.listPrizes)
+	mux.Handle("POST /v1/events/{slug}/prizes", s.requirePermission(domain.PermissionManageEvent, s.createPrize))
 	mux.HandleFunc("GET /v1/events/{slug}/teams", s.listTeams)
 	mux.Handle("POST /v1/events/{slug}/teams", s.requirePermission(domain.PermissionManageTeam, s.createTeam))
 	mux.Handle("GET /v1/teams/{teamID}/members", s.requirePermission(domain.PermissionManageTeam, s.listTeamMembers))
@@ -74,6 +78,26 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /v1/events/{slug}/submissions", s.requirePermission(domain.PermissionSubmitProject, s.createSubmission))
 	mux.Handle("GET /v1/judge/scores", s.requirePermission(domain.PermissionViewOwnScores, s.judgeScores))
 	mux.Handle("PUT /v1/judge/projects/{projectID}/review", s.requirePermission(domain.PermissionReviewProject, s.saveReview))
+	mux.Handle("GET /v1/submissions/{projectID}", s.requirePermission("", s.submissionDetail))
+	mux.Handle("PATCH /v1/submissions/{projectID}", s.requirePermission(domain.PermissionSubmitProject, s.editSubmission))
+	mux.Handle("POST /v1/submissions/{projectID}/submit", s.requirePermission(domain.PermissionSubmitProject, s.submitRevision))
+	mux.Handle("POST /v1/submissions/{projectID}/withdraw", s.requirePermission(domain.PermissionSubmitProject, s.withdrawSubmission))
+	mux.Handle("PUT /v1/organizer/submissions/{projectID}/eligibility", s.requirePermission(domain.PermissionManageSubmission, s.setEligibility))
+	mux.Handle("PUT /v1/organizer/submissions/{projectID}/status", s.requirePermission(domain.PermissionManageSubmission, s.setSubmissionStatus))
+	mux.Handle("GET /v1/organizer/duplicates", s.requirePermission(domain.PermissionManageSubmission, s.listDuplicates))
+	mux.Handle("POST /v1/organizer/duplicates/scan", s.requirePermission(domain.PermissionManageSubmission, s.scanDuplicates))
+	mux.Handle("PUT /v1/organizer/duplicates/{duplicateID}", s.requirePermission(domain.PermissionManageSubmission, s.resolveDuplicate))
+	mux.Handle("GET /v1/organizer/assignments", s.requirePermission(domain.PermissionViewAssignments, s.organizerAssignments))
+	mux.Handle("POST /v1/organizer/assignments", s.requirePermission(domain.PermissionManageAssignments, s.createAssignments))
+	mux.Handle("DELETE /v1/organizer/assignments/{assignmentID}", s.requirePermission(domain.PermissionManageAssignments, s.revokeAssignment))
+	mux.Handle("GET /v1/judge/assignments", s.requirePermission(domain.PermissionViewAssignments, s.judgeAssignments))
+	mux.Handle("POST /v1/judge/assignments/{assignmentID}/conflict", s.requirePermission(domain.PermissionDeclareConflict, s.declareConflict))
+	mux.Handle("GET /v1/organizer/rubrics", s.requirePermission(domain.PermissionManageEvent, s.listRubrics))
+	mux.Handle("POST /v1/organizer/rubrics", s.requirePermission(domain.PermissionManageEvent, s.createRubric))
+	mux.Handle("PUT /v1/organizer/rubrics/{rubricID}", s.requirePermission(domain.PermissionManageEvent, s.updateRubric))
+	mux.Handle("POST /v1/organizer/rubrics/{rubricID}/publish", s.requirePermission(domain.PermissionManageEvent, s.publishRubric))
+	mux.Handle("POST /v1/organizer/rubrics/{rubricID}/archive", s.requirePermission(domain.PermissionManageEvent, s.archiveRubric))
+	mux.HandleFunc("GET /v1/judging/rubric", s.activeRubric)
 	mux.Handle("GET /v1/organizer/progress", s.requirePermission(domain.PermissionManageEvent, s.progress))
 	mux.Handle("GET /v1/organizer/reviews", s.requirePermission(domain.PermissionViewPeerScores, s.organizerReviews))
 	mux.Handle("GET /v1/organizer/results", s.requirePermission(domain.PermissionViewPeerScores, s.results))
@@ -361,26 +385,42 @@ func (s *Server) saveReview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "validation_error", "at least one criterion score is required")
 		return
 	}
-	for criterion, score := range request.Criteria {
-		if score < 1 || score > 5 {
-			writeError(w, http.StatusUnprocessableEntity, "validation_error", fmt.Sprintf("score for %s must be between 1 and 5", criterion))
-			return
-		}
+	project, err := s.store.SubmissionByID(projectID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "project not found")
+		return
+	}
+	rubric, err := s.store.ActiveRubric(request.EventID, project.TrackID)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "validation_error", "no published rubric is active for this project")
+		return
+	}
+	if err := rubric.ValidateScores(request.Criteria); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "validation_error", err.Error())
+		return
 	}
 	if !s.store.IsAssigned(request.EventID, principal.UserID, projectID) {
 		writeError(w, http.StatusForbidden, "forbidden", "this project is not assigned to the current judge")
 		return
 	}
 	now := s.now().UTC()
-	review := domain.Review{ID: domain.NewID("rev"), EventID: request.EventID, JudgeID: principal.UserID, ProjectID: projectID, Criteria: request.Criteria, Comment: request.Comment, Submitted: request.Submitted, UpdatedAt: now}
+	review := domain.Review{ID: domain.NewID("rev"), EventID: request.EventID, JudgeID: principal.UserID, ProjectID: projectID, Criteria: request.Criteria, RubricID: rubric.ID, RubricVersion: rubric.Version, Comment: request.Comment, Submitted: request.Submitted, UpdatedAt: now}
 	if request.Submitted {
 		review.SubmittedAt = &now
 	}
-	if err := s.store.SaveReview(review); err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "validation_error", "review could not be saved")
+	saved, err := s.store.SaveReview(review)
+	if err != nil {
+		switch {
+		case errors.Is(err, domain.ErrConflict):
+			writeError(w, http.StatusConflict, "review_locked", "a submitted review cannot be changed")
+		case errors.Is(err, domain.ErrValidation):
+			writeError(w, http.StatusUnprocessableEntity, "validation_error", err.Error())
+		default:
+			writeError(w, http.StatusUnprocessableEntity, "validation_error", "review could not be saved")
+		}
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": review})
+	writeJSON(w, http.StatusOK, map[string]any{"data": saved, "rubric": rubric})
 }
 
 func (s *Server) progress(w http.ResponseWriter, r *http.Request) {

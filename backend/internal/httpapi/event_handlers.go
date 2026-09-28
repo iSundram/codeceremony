@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -102,4 +103,115 @@ func (s *Server) createTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"data": team})
+}
+
+func (s *Server) listTracks(w http.ResponseWriter, r *http.Request) {
+	event, err := s.store.EventBySlug(r.PathValue("slug"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "event not found")
+		return
+	}
+	tracks := s.store.ListTracks(event.ID)
+	writeJSON(w, http.StatusOK, map[string]any{"data": tracks, "count": len(tracks)})
+}
+
+func (s *Server) createTrack(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.PrincipalFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "authentication is required")
+		return
+	}
+	event, err := s.store.EventBySlug(r.PathValue("slug"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "event not found")
+		return
+	}
+	var request struct {
+		Name    string `json:"name"`
+		Slug    string `json:"slug"`
+		Summary string `json:"summary"`
+		Order   int    `json:"order"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	track, err := s.store.CreateTrack(domain.Track{
+		Event:   event.ID,
+		Name:    strings.TrimSpace(request.Name),
+		Slug:    strings.TrimSpace(request.Slug),
+		Summary: strings.TrimSpace(request.Summary),
+		Order:   request.Order,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, domain.ErrAlreadyExists):
+			writeError(w, http.StatusConflict, "conflict", "a track with this slug already exists for the event")
+		case errors.Is(err, domain.ErrValidation):
+			writeError(w, http.StatusUnprocessableEntity, "validation_error", "track name is required")
+		case errors.Is(err, domain.ErrNotFound):
+			writeError(w, http.StatusNotFound, "not_found", "event not found")
+		default:
+			writeError(w, http.StatusInternalServerError, "internal_error", "the track could not be created")
+		}
+		return
+	}
+	s.audit(r, principal.UserID, "event.track_created", "track", track.ID, event.ID, "track created", nil)
+	writeJSON(w, http.StatusCreated, map[string]any{"data": track})
+}
+
+func (s *Server) listPrizes(w http.ResponseWriter, r *http.Request) {
+	event, err := s.store.EventBySlug(r.PathValue("slug"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "event not found")
+		return
+	}
+	prizes := s.store.ListPrizes(event.ID)
+	writeJSON(w, http.StatusOK, map[string]any{"data": prizes, "count": len(prizes)})
+}
+
+func (s *Server) createPrize(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.PrincipalFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "authentication is required")
+		return
+	}
+	event, err := s.store.EventBySlug(r.PathValue("slug"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "event not found")
+		return
+	}
+	var request struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		TrackID     string `json:"track_id"`
+		Rank        int    `json:"rank"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if request.Rank <= 0 {
+		request.Rank = 1
+	}
+	prize, err := s.store.CreatePrize(domain.Prize{
+		EventID:     event.ID,
+		TrackID:     strings.TrimSpace(request.TrackID),
+		Name:        strings.TrimSpace(request.Name),
+		Description: strings.TrimSpace(request.Description),
+		Rank:        request.Rank,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, domain.ErrValidation):
+			writeError(w, http.StatusUnprocessableEntity, "validation_error", "prize name is required and the track must belong to this event")
+		case errors.Is(err, domain.ErrNotFound):
+			writeError(w, http.StatusNotFound, "not_found", "event not found")
+		default:
+			writeError(w, http.StatusInternalServerError, "internal_error", "the prize could not be created")
+		}
+		return
+	}
+	s.audit(r, principal.UserID, "event.prize_created", "prize", prize.ID, event.ID, "prize created", nil)
+	writeJSON(w, http.StatusCreated, map[string]any{"data": prize})
 }

@@ -8,13 +8,16 @@ import (
 
 type Data struct {
 	Users           []domain.User
+	JudgeProfiles   []domain.JudgeProfile
 	Events          []domain.Event
 	Tracks          []domain.Track
+	Prizes          []domain.Prize
 	Teams           []domain.Team
 	TeamMemberships []domain.TeamMembership
 	Submissions     []domain.Submission
 	Assignments     []domain.Assignment
 	Reviews         []domain.Review
+	Rubrics         []domain.Rubric
 	Notifications   []domain.Notification
 	AuditEvents     []domain.AuditEvent
 }
@@ -34,6 +37,26 @@ func Default(passwordHash string) Data {
 			{ID: "participant_other", Email: "participant-other@example.org", DisplayName: "Pia Teammate", Role: domain.RoleParticipant, State: domain.AccountActive, PasswordHash: passwordHash, CreatedAt: created},
 			{ID: "admin", Email: "admin@example.org", DisplayName: "Ari Admin", Role: domain.RoleAdmin, State: domain.AccountActive, PasswordHash: passwordHash, CreatedAt: created},
 		},
+		JudgeProfiles: []domain.JudgeProfile{
+			{UserID: "judge_a", Bio: "Seeded judge A.", Tracks: []string{"trk_01", "trk_03"}, Capacity: 20, Active: true},
+			{UserID: "judge_b", Bio: "Seeded judge B.", Tracks: []string{"trk_01", "trk_02", "trk_03"}, Capacity: 20, Active: true},
+		},
+		Rubrics: []domain.Rubric{{
+			ID:      "rub_01",
+			EventID: "evt_01",
+			Name:    "Standard judging rubric",
+			Version: 1,
+			Status:  domain.RubricPublished,
+			Criteria: []domain.RubricCriterion{
+				{Key: "functionality", Label: "Functionality", Description: "Does the project work end to end?", MinScore: 1, MaxScore: 5, Weight: 40, Required: true},
+				{Key: "quality", Label: "Quality", Description: "Is the work clear, complete, and well built?", MinScore: 1, MaxScore: 5, Weight: 35, Required: true},
+				{Key: "innovation", Label: "Innovation", Description: "Is the idea original and meaningfully different?", MinScore: 1, MaxScore: 5, Weight: 25, Required: true},
+			},
+			CreatedBy:    "organizer",
+			CreatedAt:    created,
+			PublishedAt:  timePtr(created),
+			Instructions: "Score every criterion. Judges cannot see other judges' scores until results are published.",
+		}},
 		Events: []domain.Event{{
 			ID:               "evt_01",
 			Slug:             "sample-hack-2026",
@@ -51,6 +74,10 @@ func Default(passwordHash string) Data {
 			{ID: "trk_02", Event: "evt_01", Name: "Data and analytics", Slug: "data-and-analytics"},
 			{ID: "trk_03", Event: "evt_01", Name: "Accessibility", Slug: "accessibility"},
 		},
+		Prizes: []domain.Prize{
+			{ID: "prz_01", EventID: "evt_01", Name: "Overall first place", Description: "Best overall project.", Rank: 1, CreatedAt: created},
+			{ID: "prz_02", EventID: "evt_01", TrackID: "trk_03", Name: "Accessibility prize", Description: "Most thoughtful accessibility work.", Rank: 1, CreatedAt: created},
+		},
 		Teams: []domain.Team{
 			{ID: "tm_01", EventID: "evt_01", Name: "NorthKiln", Description: "A seeded team.", CaptainID: "participant", Status: domain.TeamStatusActive, CreatedAt: created},
 			{ID: "tm_02", EventID: "evt_01", Name: "LoudQuarry", Description: "A seeded team.", CaptainID: "participant", Status: domain.TeamStatusActive, CreatedAt: created},
@@ -64,25 +91,25 @@ func Default(passwordHash string) Data {
 			{
 				ID: "prj_01", EventID: "evt_01", TeamID: "tm_01", TrackID: "trk_01", Title: "Glass Signal",
 				Summary: "One line of what it does.", Description: "A seeded project for the public gallery.",
-				RepositoryURL: "https://example.org/repo/01", Tags: []string{"go", "platform"}, Status: domain.SubmissionSubmitted,
+				RepositoryURL: "https://example.org/repo/01", Tags: []string{"go", "platform"}, Status: domain.SubmissionSubmitted, Eligibility: domain.EligibilityEligible,
 				SubmittedAt: timePtr(submitted), UpdatedAt: submitted, Version: 1,
 			},
 			{
 				ID: "prj_02", EventID: "evt_01", TeamID: "tm_02", TrackID: "trk_03", Title: "Small Meadow",
 				Summary: "One line of what it does.", Description: "A seeded project for the public gallery.",
-				RepositoryURL: "https://example.org/repo/02", Tags: []string{"accessibility"}, Status: domain.SubmissionSubmitted,
+				RepositoryURL: "https://example.org/repo/02", Tags: []string{"accessibility"}, Status: domain.SubmissionSubmitted, Eligibility: domain.EligibilityEligible,
 				SubmittedAt: timePtr(submitted), UpdatedAt: submitted, Version: 1,
 			},
 			{
 				ID: "prj_03", EventID: "evt_01", TeamID: "tm_01", TrackID: "trk_02", Title: "Deep Compass",
 				Summary: "One line of what it does.", Description: "A seeded project for the public gallery.",
-				RepositoryURL: "https://example.org/repo/03", Tags: []string{"data"}, Status: domain.SubmissionSubmitted,
+				RepositoryURL: "https://example.org/repo/03", Tags: []string{"data"}, Status: domain.SubmissionSubmitted, Eligibility: domain.EligibilityEligible,
 				SubmittedAt: timePtr(submitted), UpdatedAt: submitted, Version: 1,
 			},
 			{
 				ID: "prj_04", EventID: "evt_01", TeamID: "tm_02", TrackID: "trk_01", Title: "Green Switch",
 				Summary: "One line of what it does.", Description: "A seeded project for the public gallery.",
-				RepositoryURL: "https://example.org/repo/04", Tags: []string{"platform"}, Status: domain.SubmissionSubmitted,
+				RepositoryURL: "https://example.org/repo/04", Tags: []string{"platform"}, Status: domain.SubmissionSubmitted, Eligibility: domain.EligibilityEligible,
 				SubmittedAt: timePtr(submitted), UpdatedAt: submitted, Version: 1,
 			},
 		},

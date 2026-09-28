@@ -17,13 +17,6 @@ type User struct {
 	CreatedAt    time.Time    `json:"created_at"`
 }
 
-type Track struct {
-	ID    string `json:"id"`
-	Event string `json:"event_id"`
-	Name  string `json:"name"`
-	Slug  string `json:"slug"`
-}
-
 type Event struct {
 	ID               string    `json:"id"`
 	Slug             string    `json:"slug"`
@@ -60,43 +53,53 @@ const (
 )
 
 type Submission struct {
-	ID            string            `json:"id"`
-	EventID       string            `json:"event_id"`
-	TeamID        string            `json:"team_id"`
-	TrackID       string            `json:"track_id"`
-	Title         string            `json:"title"`
-	Summary       string            `json:"summary"`
-	Description   string            `json:"description"`
-	ThumbnailURL  string            `json:"thumbnail_url,omitempty"`
-	VideoURL      string            `json:"video_url,omitempty"`
-	RepositoryURL string            `json:"repo_url,omitempty"`
-	LiveURL       string            `json:"live_url,omitempty"`
-	Tags          []string          `json:"tags"`
-	CustomAnswers map[string]string `json:"custom_answers,omitempty"`
-	Status        SubmissionStatus  `json:"status"`
-	SubmittedAt   *time.Time        `json:"submitted_at,omitempty"`
-	UpdatedAt     time.Time         `json:"updated_at"`
-	Version       int               `json:"version"`
+	ID              string              `json:"id"`
+	EventID         string              `json:"event_id"`
+	TeamID          string              `json:"team_id"`
+	TrackID         string              `json:"track_id"`
+	Title           string              `json:"title"`
+	Summary         string              `json:"summary"`
+	Description     string              `json:"description"`
+	ThumbnailURL    string              `json:"thumbnail_url,omitempty"`
+	VideoURL        string              `json:"video_url,omitempty"`
+	RepositoryURL   string              `json:"repo_url,omitempty"`
+	LiveURL         string              `json:"live_url,omitempty"`
+	Tags            []string            `json:"tags"`
+	CustomAnswers   map[string]string   `json:"custom_answers,omitempty"`
+	Status          SubmissionStatus    `json:"status"`
+	Eligibility     EligibilityDecision `json:"eligibility"`
+	EligibilityNote string              `json:"eligibility_note,omitempty"`
+	EligibilityBy   string              `json:"eligibility_by,omitempty"`
+	EligibilityAt   *time.Time          `json:"eligibility_at,omitempty"`
+	SubmittedAt     *time.Time          `json:"submitted_at,omitempty"`
+	UpdatedAt       time.Time           `json:"updated_at"`
+	Version         int                 `json:"version"`
 }
 
 type Review struct {
-	ID          string         `json:"id"`
-	EventID     string         `json:"event_id"`
-	JudgeID     string         `json:"judge_id"`
-	ProjectID   string         `json:"project_id"`
-	Criteria    map[string]int `json:"criteria"`
-	Comment     string         `json:"comment"`
-	Submitted   bool           `json:"submitted"`
-	SubmittedAt *time.Time     `json:"submitted_at,omitempty"`
-	UpdatedAt   time.Time      `json:"updated_at"`
+	ID            string         `json:"id"`
+	EventID       string         `json:"event_id"`
+	JudgeID       string         `json:"judge_id"`
+	ProjectID     string         `json:"project_id"`
+	Criteria      map[string]int `json:"criteria"`
+	Normalized    map[string]int `json:"normalized,omitempty"`
+	RubricID      string         `json:"rubric_id,omitempty"`
+	RubricVersion int            `json:"rubric_version,omitempty"`
+	Comment       string         `json:"comment"`
+	Submitted     bool           `json:"submitted"`
+	SubmittedAt   *time.Time     `json:"submitted_at,omitempty"`
+	UpdatedAt     time.Time      `json:"updated_at"`
 }
 
 type Assignment struct {
-	ID        string    `json:"id"`
-	EventID   string    `json:"event_id"`
-	JudgeID   string    `json:"judge_id"`
-	ProjectID string    `json:"project_id"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         string             `json:"id"`
+	EventID    string             `json:"event_id"`
+	JudgeID    string             `json:"judge_id"`
+	ProjectID  string             `json:"project_id"`
+	AssignedBy string             `json:"assigned_by,omitempty"`
+	Strategy   AssignmentStrategy `json:"strategy,omitempty"`
+	CreatedAt  time.Time          `json:"created_at"`
+	RevokedAt  *time.Time         `json:"revoked_at,omitempty"`
 }
 
 type Progress struct {
