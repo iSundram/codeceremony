@@ -125,6 +125,8 @@ func (s *Server) createTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, principal.UserID, "team.created", "team", team.ID, event.ID, "team created", map[string]any{"scope": team.Scope, "availability": team.Availability})
+	s.recordActivity(r, principal.UserID, domain.ActivityTeam, "team.created", "team", team.ID, event.ID,
+		principal.UserID+" created the team "+team.Name, domain.ActivityPublic, map[string]any{"scope": team.Scope, "availability": team.Availability})
 	writeJSON(w, http.StatusCreated, map[string]any{"data": team})
 }
 

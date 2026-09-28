@@ -363,3 +363,36 @@ PostgreSQL adapter and migration execution, public voting and comments, notifica
 - `POST /v1/teams/{teamID}/invites`, `DELETE /v1/teams/{teamID}/invites/{inviteID}`, `GET /v1/invites`, `POST /v1/invites/{inviteID}`
 - `GET /v1/users/{userID}/appearances`, `PATCH /v1/teams/{teamID}`
 - `backend/migrations/0004_hackathon_hosting.sql`
+
+## 12. Shipped in the visibility and communication tranche
+
+### Event directory, roles, and permissions
+
+- `GET /v1/directory` returns a catalog of every hackathon with counts for teams, submissions, judges, tracks, milestones, custom questions, open invites, and participation, plus deadline countdowns, state, and search by `state`, `q`, or `slug`.
+- Per-hackathon staff roles: `owner`, `co_organizer`, `judge_liaison`, `viewer`, each with its own permission set and rank. Adding a role at or below an existing one is refused, and only organizers and admins can hold event staff.
+- `GET|POST /v1/events/{slug}/staff` and `DELETE /v1/events/{slug}/staff/{userID}`.
+- `GET /v1/permissions` publishes the full matrix: every permission, its description and category, and the platform roles and event roles that hold it.
+
+### Activity log
+
+- A first-class activity stream separate from the audit log, with categories `event`, `team`, `submission`, `judging`, `results`, `account`, and `communication`.
+- Visibility levels `public`, `participants`, `judges`, and `organizers`, enforced per viewer role and event membership.
+- Recorded for team creation, invites, membership, submission create/revise/submit/withdraw, eligibility and status changes, duplicate scans, assignment creation and revocation, conflict declarations, judge roster changes, profile and preference updates, and result publication.
+- `GET /v1/activity` and `GET /v1/events/{slug}/activity` support category, action, actor, target type, visibility, limit, offset, and a `counts_only` rollup with per-category and per-visibility totals.
+
+### Mail
+
+- `internal/mailer` with a template registry, an SMTP sender, and a log sink used automatically when SMTP is not configured, so development and tests never require a mail server.
+- Templates: `welcome`, `verify_email`, `password_reset`, `account_deletion_scheduled`, `team_invite`, `submission_received`, `review_reminder`, `results_published`, `hackathon_announcement`, and `weekly_digest`.
+- Transactional mail is tied to account and event actions; promotional mail is opt-in per topic.
+- Preferences per user across transactional, account security, account lifecycle, team activity, event activity, judging, results, marketing, and weekly digest, with a full opt-out that also blocks account security mail.
+- Outbox with statuses `queued`, `sending`, `sent`, `failed`, `skipped`, dedupe keys, exponential backoff capped at 30 minutes, and an attempt budget before a message is marked failed.
+- Single-use unsubscribe tokens with expiry, consumed on use, driving a full opt-out.
+- Organizer announcements to `all`, `seeking`, `team_captains`, or `judges`, with per-recipient exclusion reasons for people who never opted into marketing.
+- Judging reminder and weekly digest jobs, plus a manual queue flush.
+- Endpoints: `GET|PATCH /v1/email/preferences`, `POST /v1/email/verify`, `POST /v1/email/password-reset`, `GET /v1/unsubscribe/{token}`, `POST /v1/organizer/events/{slug}/announcements`, `POST /v1/organizer/events/{slug}/review-reminders`, `POST /v1/organizer/mail/flush`, `POST /v1/organizer/mail/weekly-digest`, `GET /v1/organizer/mail/outbox`, `GET /v1/organizer/mail/templates`.
+
+### Configuration
+
+- `APP_BASE_URL` for links in mail, `SMTP_FROM_NAME`, `MAIL_INTERVAL_SECONDS`, `MAIL_BATCH_SIZE`, `MAIL_MAX_ATTEMPTS`, all documented in `.env.example`.
+- `backend/migrations/0005_activity_and_mail.sql` covers the activity log, event staff, mail preferences, mail outbox, and unsubscribe tokens.

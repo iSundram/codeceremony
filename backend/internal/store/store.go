@@ -26,6 +26,12 @@ type Store struct {
 	roster             map[string]domain.JudgeRosterEntry
 	invites            map[string]domain.TeamInvite
 	participations     map[string]domain.Participation
+	activity           map[string]domain.ActivityEntry
+	staff              map[string]domain.EventStaff
+	mail               map[string]domain.MailMessage
+	mailByDedupe       map[string]domain.MailMessage
+	mailPreferences    map[string]domain.MailPreferences
+	unsubscribe        map[string]domain.UnsubscribeToken
 	events             map[string]domain.Event
 	tracks             map[string]domain.Track
 	prizes             map[string]domain.Prize
@@ -55,6 +61,12 @@ func New(data seed.Data) *Store {
 		roster:             make(map[string]domain.JudgeRosterEntry, len(data.JudgeRoster)),
 		invites:            make(map[string]domain.TeamInvite, len(data.Invites)),
 		participations:     make(map[string]domain.Participation, len(data.Participations)),
+		activity:           make(map[string]domain.ActivityEntry, len(data.Activity)),
+		staff:              make(map[string]domain.EventStaff, len(data.EventStaff)),
+		mail:               make(map[string]domain.MailMessage),
+		mailByDedupe:       make(map[string]domain.MailMessage),
+		mailPreferences:    make(map[string]domain.MailPreferences, len(data.MailPreferences)),
+		unsubscribe:        make(map[string]domain.UnsubscribeToken),
 		events:             make(map[string]domain.Event, len(data.Events)),
 		tracks:             make(map[string]domain.Track, len(data.Tracks)),
 		prizes:             make(map[string]domain.Prize, len(data.Prizes)),
@@ -108,6 +120,15 @@ func New(data seed.Data) *Store {
 	}
 	for _, participation := range data.Participations {
 		store.participations[participationKey(participation.UserID, participation.EventID)] = participation
+	}
+	for _, entry := range data.Activity {
+		store.activity[entry.ID] = entry
+	}
+	for _, member := range data.EventStaff {
+		store.staff[staffKey(member.EventID, member.UserID)] = member
+	}
+	for _, preferences := range data.MailPreferences {
+		store.mailPreferences[preferences.UserID] = preferences
 	}
 	for _, team := range data.Teams {
 		store.teams[team.ID] = team

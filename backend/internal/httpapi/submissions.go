@@ -3,6 +3,7 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/iSundram/codeceremony/backend/internal/auth"
@@ -169,6 +170,8 @@ func (s *Server) editSubmission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, principal.UserID, "submission.revised", "submission", updated.ID, updated.EventID, request.Reason, map[string]any{"version": version.Version})
+	s.recordActivity(r, principal.UserID, domain.ActivitySubmission, "submission.revised", "submission", updated.ID, updated.EventID,
+		updated.Title+" was revised to version "+strconv.Itoa(version.Version), domain.ActivityParticipants, map[string]any{"version": version.Version, "reason": request.Reason})
 	writeJSON(w, http.StatusOK, map[string]any{"data": updated, "version": version})
 }
 
@@ -211,6 +214,8 @@ func (s *Server) submitRevision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, principal.UserID, "submission.submitted", "submission", updated.ID, updated.EventID, "captain submitted", map[string]any{"version": updated.Version})
+	s.recordActivity(r, principal.UserID, domain.ActivitySubmission, "submission.submitted", "submission", updated.ID, updated.EventID,
+		updated.Title+" is submitted and awaiting review", domain.ActivityPublic, map[string]any{"version": updated.Version})
 	writeJSON(w, http.StatusOK, map[string]any{"data": updated})
 }
 
@@ -247,6 +252,8 @@ func (s *Server) withdrawSubmission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, principal.UserID, "submission.withdrawn", "submission", updated.ID, updated.EventID, request.Reason, nil)
+	s.recordActivity(r, principal.UserID, domain.ActivitySubmission, "submission.withdrawn", "submission", updated.ID, updated.EventID,
+		updated.Title+" was withdrawn", domain.ActivityParticipants, map[string]any{"reason": request.Reason})
 	writeJSON(w, http.StatusOK, map[string]any{"data": updated})
 }
 
@@ -278,6 +285,8 @@ func (s *Server) setEligibility(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, principal.UserID, "submission.eligibility_set", "submission", updated.ID, updated.EventID, request.Note, map[string]any{"decision": request.Decision})
+	s.recordActivity(r, principal.UserID, domain.ActivitySubmission, "submission.eligibility_set", "submission", updated.ID, updated.EventID,
+		"an organizer marked "+updated.Title+" as "+string(updated.Eligibility), domain.ActivityOrganizers, map[string]any{"decision": request.Decision, "note": request.Note})
 	writeJSON(w, http.StatusOK, map[string]any{"data": updated})
 }
 
@@ -311,6 +320,8 @@ func (s *Server) setSubmissionStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, principal.UserID, "submission.status_changed", "submission", updated.ID, updated.EventID, request.Note, map[string]any{"status": request.Status})
+	s.recordActivity(r, principal.UserID, domain.ActivitySubmission, "submission.status_changed", "submission", updated.ID, updated.EventID,
+		updated.Title+" moved to "+string(updated.Status), domain.ActivityParticipants, map[string]any{"status": request.Status, "note": request.Note})
 	writeJSON(w, http.StatusOK, map[string]any{"data": updated})
 }
 
@@ -330,6 +341,8 @@ func (s *Server) scanDuplicates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, principal.UserID, "duplicates.scanned", "event", eventID, eventID, "duplicate scan", map[string]any{"new_flags": len(flags)})
+	s.recordActivity(r, principal.UserID, domain.ActivitySubmission, "duplicates.scanned", "event", eventID, eventID,
+		"a duplicate scan flagged "+strconv.Itoa(len(flags))+" pairs", domain.ActivityOrganizers, map[string]any{"new_flags": len(flags)})
 	writeJSON(w, http.StatusOK, map[string]any{"data": flags, "created": len(flags), "open": len(s.store.ListDuplicates(eventID, domain.DuplicateOpen))})
 }
 

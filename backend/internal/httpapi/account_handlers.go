@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/iSundram/codeceremony/backend/internal/auth"
 	"github.com/iSundram/codeceremony/backend/internal/domain"
@@ -101,7 +102,17 @@ func (s *Server) requestDeletion(w http.ResponseWriter, r *http.Request) {
 	}
 	s.store.RevokeUserSessions(principal.UserID, "", "deletion_requested")
 	s.audit(r, principal.UserID, "account.deletion_requested", "user", principal.UserID, "", "user_requested", nil)
-	writeJSON(w, http.StatusAccepted, map[string]any{"data": map[string]string{"status": "deletion_pending"}})
+	scheduledFor := s.now().UTC().Add(30 * 24 * time.Hour)
+	if _, err := s.mailService.SendDeletionScheduled(principal.UserID, scheduledFor); err != nil {
+		s.logger.Warn("deletion notice not queued", "user_id", principal.UserID, "error", err)
+	}
+	s.recordActivity(r, principal.UserID, domain.ActivityAccount, "account.deletion_requested", "user", principal.UserID, "",
+		"an account deletion was requested", domain.ActivityOrganizers, map[string]any{"scheduled_for": scheduledFor})
+	writeJSON(w, http.StatusAccepted, map[string]any{"data": map[string]string{
+		"status":        "deletion_pending",
+		"scheduled_for": scheduledFor.Format(time.RFC3339),
+		"cancel_within": "30 days",
+	}})
 }
 
 func (s *Server) cancelDeletion(w http.ResponseWriter, r *http.Request) {

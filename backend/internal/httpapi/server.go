@@ -11,28 +11,51 @@ import (
 	"github.com/iSundram/codeceremony/backend/internal/auth"
 	"github.com/iSundram/codeceremony/backend/internal/config"
 	"github.com/iSundram/codeceremony/backend/internal/domain"
+	"github.com/iSundram/codeceremony/backend/internal/mailer"
 	"github.com/iSundram/codeceremony/backend/internal/store"
 )
 
 type Server struct {
-	cfg    config.Config
-	store  *store.Store
-	tokens auth.TokenIssuer
-	now    func() time.Time
-	logger *slog.Logger
+	cfg         config.Config
+	store       *store.Store
+	tokens      auth.TokenIssuer
+	mailService *mailer.Service
+	now         func() time.Time
+	logger      *slog.Logger
 }
 
 func New(cfg config.Config, data *store.Store, tokens auth.TokenIssuer, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	registry := mailer.NewRegistry()
+	dispatcher := mailer.NewDispatcher(data, registry, mailer.NewSender(cfg, logger), mailer.DispatcherOptions{
+		FromAddress: cfg.SMTPFrom,
+		Logger:      logger,
+	})
+	mailService := mailer.NewService(data, dispatcher, registry, mailer.Options{
+		AppURL:      cfg.AppBaseURL,
+		FromAddress: cfg.SMTPFrom,
+		Logger:      logger,
+	})
 	return &Server{
-		cfg:    cfg,
-		store:  data,
-		tokens: tokens,
-		now:    time.Now,
-		logger: logger,
+		cfg:         cfg,
+		store:       data,
+		tokens:      tokens,
+		mailService: mailService,
+		now:         time.Now,
+		logger:      logger,
 	}
+}
+
+// MailDispatcher exposes the delivery worker so the process entry point can run it.
+func (s *Server) MailDispatcher() *mailer.Dispatcher {
+	return s.mailService.Dispatcher()
+}
+
+// MailService exposes the mail service for background jobs and tests.
+func (s *Server) MailService() *mailer.Service {
+	return s.mailService
 }
 
 func (s *Server) Handler() http.Handler {
@@ -60,6 +83,25 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /v1/admin/users/{userID}/sessions/revoke", s.requirePermission(domain.PermissionManagePlatform, s.adminRevokeUserSessions))
 	mux.Handle("GET /v1/admin/audit", s.requirePermission(domain.PermissionManagePlatform, s.adminAudit))
 	mux.HandleFunc("GET /v1/events", s.listEvents)
+	mux.HandleFunc("GET /v1/directory", s.eventDirectory)
+	mux.HandleFunc("GET /v1/permissions", s.permissionMatrix)
+	mux.Handle("GET /v1/activity", s.requirePermission("", s.activityFeed))
+	mux.Handle("GET /v1/events/{slug}/activity", s.optionalAuth(s.activityFeed))
+	mux.HandleFunc("GET /v1/events/{slug}/staff", s.listEventStaff)
+	mux.Handle("POST /v1/events/{slug}/staff", s.requirePermission(domain.PermissionManageRoles, s.addEventStaff))
+	mux.Handle("DELETE /v1/events/{slug}/staff/{userID}", s.requirePermission(domain.PermissionManageRoles, s.removeEventStaff))
+	mux.Handle("GET /v1/email/preferences", s.requirePermission(domain.PermissionViewOwnNotifications, s.mailPreferences))
+	mux.Handle("PATCH /v1/email/preferences", s.requirePermission(domain.PermissionManageSelf, s.updateMailPreferences))
+	mux.Handle("POST /v1/email/verify", s.requirePermission(domain.PermissionManageSelf, s.requestVerificationMail))
+	mux.Handle("POST /v1/email/password-reset", s.requirePermission(domain.PermissionManageSelf, s.requestPasswordResetMail))
+	mux.HandleFunc("GET /v1/unsubscribe/{token}", s.unsubscribe)
+	mux.HandleFunc("GET /v1/unsubscribe", s.unsubscribe)
+	mux.Handle("POST /v1/organizer/events/{slug}/announcements", s.requirePermission(domain.PermissionManageEvent, s.sendAnnouncement))
+	mux.Handle("POST /v1/organizer/events/{slug}/review-reminders", s.requirePermission(domain.PermissionManageEvent, s.sendReviewReminders))
+	mux.Handle("POST /v1/organizer/mail/flush", s.requirePermission(domain.PermissionManagePlatform, s.flushMailQueue))
+	mux.Handle("POST /v1/organizer/mail/weekly-digest", s.requirePermission(domain.PermissionManagePlatform, s.sendWeeklyDigests))
+	mux.Handle("GET /v1/organizer/mail/outbox", s.requirePermission(domain.PermissionViewAudit, s.mailOutbox))
+	mux.Handle("GET /v1/organizer/mail/templates", s.requirePermission(domain.PermissionViewAudit, s.mailTemplates))
 	mux.Handle("POST /v1/events", s.requirePermission(domain.PermissionManageEvent, s.createEvent))
 	mux.HandleFunc("GET /v1/events/{slug}", s.hackathon)
 	mux.Handle("PATCH /v1/events/{slug}", s.requirePermission(domain.PermissionManageEvent, s.updateHackathon))
@@ -411,6 +453,11 @@ func (s *Server) createSubmission(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "validation_error", "submission could not be created")
 		return
 	}
+	s.recordActivity(r, principal.UserID, domain.ActivitySubmission, "submission.created", "submission", submission.ID, event.ID,
+		team.Name+" submitted "+submission.Title, domain.ActivityPublic, map[string]any{"track_id": submission.TrackID, "version": submission.Version})
+	if _, err := s.mailService.SendSubmissionReceived(principal.UserID, event.ID, submission.ID, submission.Title, submission.Version); err != nil {
+		s.logger.Warn("submission mail not queued", "submission_id", submission.ID, "error", err)
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{"data": submission})
 }
 
@@ -482,6 +529,10 @@ func (s *Server) saveReview(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnprocessableEntity, "validation_error", "review could not be saved")
 		}
 		return
+	}
+	if saved.Submitted {
+		s.recordActivity(r, principal.UserID, domain.ActivityJudging, "review.submitted", "submission", saved.ProjectID, saved.EventID,
+			"a judge completed a review", domain.ActivityParticipants, map[string]any{"review_id": saved.ID, "rubric_version": saved.RubricVersion})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": saved, "rubric": rubric})
 }

@@ -494,6 +494,8 @@ func (s *Server) addJudge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, principal.UserID, "hackathon.judge_added", "user", judgeID, event.ID, "judge added to roster", map[string]any{"scope": entry.Scope})
+	s.recordActivity(r, principal.UserID, domain.ActivityJudging, "hackathon.judge_added", "user", judgeID, event.ID,
+		"a judge joined the "+event.Name+" panel", domain.ActivityParticipants, map[string]any{"scope": entry.Scope})
 	writeJSON(w, http.StatusCreated, map[string]any{"data": entry})
 }
 
@@ -613,15 +615,18 @@ func (s *Server) publishResults(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "hackathon not found")
 		return
 	}
-	notified := s.notifyResultsPublished(event, updated, request.Note, pending, len(reviews))
+	notified, mailed := s.notifyResultsPublished(event, updated, request.Note, pending, len(reviews))
 	s.audit(r, principal.UserID, "hackathon.results_published", "event", event.ID, event.ID, strings.TrimSpace(request.Note), map[string]any{
 		"notified":        notified,
 		"pending_reviews": pending,
 		"public":          request.Public,
 	})
+	s.recordActivity(r, principal.UserID, domain.ActivityResults, "results.published", "event", event.ID, event.ID,
+		"results for "+updated.Name+" were published", domain.ActivityPublic, map[string]any{"public": request.Public, "notified": notified})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data":            updated,
 		"notified":        notified,
+		"mailed":          mailed,
 		"pending_reviews": pending,
 	})
 }
@@ -664,8 +669,9 @@ func (s *Server) unpublishResults(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"data": updated})
 }
 
-func (s *Server) notifyResultsPublished(event, updated domain.Event, note string, pending, totalReviews int) int {
+func (s *Server) notifyResultsPublished(event, updated domain.Event, note string, pending, totalReviews int) (int, int) {
 	notified := 0
+	mailed := 0
 	rankByTeam := map[string]string{}
 	if summary, err := judging.Normalize(s.store.AllReviews(event.ID), s.eventWeights(event.ID)); err == nil {
 		for _, project := range summary.Projects {
@@ -701,6 +707,9 @@ func (s *Server) notifyResultsPublished(event, updated domain.Event, note string
 			}); err == nil {
 				notified++
 			}
+			if sent, err := s.mailService.SendResultsPublished(membership.UserID, updated.ID, rank); err == nil && sent.Status != domain.MailSkipped {
+				mailed++
+			}
 		}
 	}
 	for _, entry := range s.store.JudgeRoster(event.ID) {
@@ -718,5 +727,5 @@ func (s *Server) notifyResultsPublished(event, updated domain.Event, note string
 	_ = totalReviews
 	_ = pending
 	_ = event
-	return notified
+	return notified, mailed
 }

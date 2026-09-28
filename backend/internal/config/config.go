@@ -19,7 +19,12 @@ type Config struct {
 	SMTPUsername    string
 	SMTPPassword    string
 	SMTPFrom        string
+	SMTPFromName    string
 	SMTPEncryption  string
+	AppBaseURL      string
+	MailInterval    int
+	MailBatchSize   int
+	MailMaxAttempts int
 }
 
 func Load() (Config, error) {
@@ -34,7 +39,12 @@ func Load() (Config, error) {
 		SMTPUsername:    strings.TrimSpace(os.Getenv("SMTP_USERNAME")),
 		SMTPPassword:    strings.TrimSpace(os.Getenv("SMTP_PASSWORD")),
 		SMTPFrom:        strings.TrimSpace(os.Getenv("SMTP_FROM")),
+		SMTPFromName:    envOr("SMTP_FROM_NAME", "CodeCeremony"),
 		SMTPEncryption:  envOr("SMTP_ENCRYPTION", "starttls"),
+		AppBaseURL:      strings.TrimRight(envOr("APP_BASE_URL", "http://localhost:3000"), "/"),
+		MailInterval:    10,
+		MailBatchSize:   20,
+		MailMaxAttempts: 4,
 	}
 
 	if raw := strings.TrimSpace(os.Getenv("SEED_DEMO_DATA")); raw != "" {
@@ -60,6 +70,27 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("SMTP_PORT must be a valid port")
 		}
 		cfg.SMTPPort = value
+	}
+	if raw := strings.TrimSpace(os.Getenv("MAIL_INTERVAL_SECONDS")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 {
+			return Config{}, fmt.Errorf("MAIL_INTERVAL_SECONDS must be a positive integer")
+		}
+		cfg.MailInterval = value
+	}
+	if raw := strings.TrimSpace(os.Getenv("MAIL_BATCH_SIZE")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 || value > 500 {
+			return Config{}, fmt.Errorf("MAIL_BATCH_SIZE must be between 1 and 500")
+		}
+		cfg.MailBatchSize = value
+	}
+	if raw := strings.TrimSpace(os.Getenv("MAIL_MAX_ATTEMPTS")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 || value > 10 {
+			return Config{}, fmt.Errorf("MAIL_MAX_ATTEMPTS must be between 1 and 10")
+		}
+		cfg.MailMaxAttempts = value
 	}
 	if cfg.SMTPEncryption != "none" && cfg.SMTPEncryption != "starttls" && cfg.SMTPEncryption != "tls" {
 		return Config{}, fmt.Errorf("SMTP_ENCRYPTION must be none, starttls, or tls")

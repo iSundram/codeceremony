@@ -19,6 +19,9 @@ type Data struct {
 	JudgeRoster     []domain.JudgeRosterEntry
 	Invites         []domain.TeamInvite
 	Participations  []domain.Participation
+	Activity        []domain.ActivityEntry
+	EventStaff      []domain.EventStaff
+	MailPreferences []domain.MailPreferences
 	Teams           []domain.Team
 	TeamMemberships []domain.TeamMembership
 	Submissions     []domain.Submission
@@ -155,6 +158,22 @@ func Default(passwordHash string) Data {
 			{ID: "par_03", UserID: "judge_a", EventID: "evt_01", Role: domain.ParticipationJudge, CreatedAt: created},
 			{ID: "par_04", UserID: "judge_b", EventID: "evt_01", Role: domain.ParticipationJudge, CreatedAt: created},
 			{ID: "par_05", UserID: "organizer", EventID: "evt_01", Role: domain.ParticipationOrganizer, CreatedAt: created},
+		},
+		Activity: []domain.ActivityEntry{
+			{ID: "act_01", EventID: "evt_01", ActorID: "participant", Category: domain.ActivityEvent, Action: "event.created", TargetType: "event", TargetID: "evt_01", Summary: "Sample Hack 2026 was created", Visibility: domain.ActivityPublic, CreatedAt: created, Metadata: map[string]any{"tracks": 3}},
+			{ID: "act_02", EventID: "evt_01", ActorID: "organizer", Category: domain.ActivityEvent, Action: "hackathon.judge_added", TargetType: "user", TargetID: "judge_a", Summary: "a judge joined the Sample Hack 2026 panel", Visibility: domain.ActivityParticipants, CreatedAt: created},
+			{ID: "act_03", EventID: "evt_01", ActorID: "participant", Category: domain.ActivitySubmission, Action: "submission.created", TargetType: "submission", TargetID: "prj_01", Summary: "NorthKiln submitted Glass Signal", Visibility: domain.ActivityPublic, CreatedAt: submitted},
+			{ID: "act_04", EventID: "evt_01", ActorID: "judge_a", Category: domain.ActivityJudging, Action: "review.submitted", TargetType: "submission", TargetID: "prj_01", Summary: "a judge completed a review", Visibility: domain.ActivityParticipants, CreatedAt: reviewed},
+			{ID: "act_05", EventID: "evt_01", ActorID: "organizer", Category: domain.ActivityResults, Action: "hackathon.results_published", TargetType: "event", TargetID: "evt_01", Summary: "results for Sample Hack 2026 were published", Visibility: domain.ActivityPublic, CreatedAt: time.Date(2026, time.March, 3, 10, 0, 0, 0, time.UTC)},
+			{ID: "act_06", EventID: "evt_01", ActorID: "participant_other", Category: domain.ActivityTeam, Action: "team.member_joined", TargetType: "team", TargetID: "tm_01", Summary: "participant_other joined NorthKiln", Visibility: domain.ActivityParticipants, CreatedAt: created},
+		},
+		EventStaff: []domain.EventStaff{
+			{EventID: "evt_01", UserID: "organizer", Role: domain.EventRoleOwner, Title: "Lead organizer", AddedBy: "admin", CreatedAt: created},
+			{EventID: "evt_01", UserID: "admin", Role: domain.EventRoleCoOrganizer, Title: "Platform support", AddedBy: "admin", CreatedAt: created},
+		},
+		MailPreferences: []domain.MailPreferences{
+			{UserID: "participant", Transactional: true, AccountSecurity: true, AccountLifecycle: true, TeamActivity: true, EventActivity: true, Judging: true, Results: true, Marketing: true, WeeklyDigest: true, UpdatedAt: created},
+			{UserID: "participant_other", Transactional: true, AccountSecurity: true, AccountLifecycle: true, TeamActivity: true, EventActivity: true, Judging: true, Results: true, Marketing: false, UpdatedAt: created},
 		},
 		Teams: []domain.Team{
 			{ID: "tm_01", EventID: "evt_01", Scope: domain.TeamScopeHackathon, Name: "NorthKiln", Description: "A seeded team.", CaptainID: "participant", Status: domain.TeamStatusActive, Availability: domain.TeamOpenForMembers, MaxSize: 4, OpenRoles: []string{"frontend", "design"}, CreatedAt: created},

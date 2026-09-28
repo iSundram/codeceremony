@@ -127,6 +127,8 @@ func (s *Server) updateProfileSettings(w http.ResponseWriter, r *http.Request) {
 		s.logger.Warn("profile bio mirror failed", "user_id", principal.UserID, "error", err)
 	}
 	s.audit(r, principal.UserID, "profile.updated", "user", principal.UserID, profile.SeekingEventID, "profile updated", nil)
+	s.recordActivity(r, principal.UserID, domain.ActivityAccount, "profile.updated", "user", principal.UserID, profile.SeekingEventID,
+		principal.UserID+" set availability to "+string(profile.Availability), domain.ActivityParticipants, map[string]any{"seeking_team": profile.SeekingTeam})
 	writeJSON(w, http.StatusOK, map[string]any{"data": saved, "links": saved.LinkList()})
 }
 
@@ -249,6 +251,17 @@ func (s *Server) createInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, principal.UserID, "team.invite_sent", "team", teamID, team.EventID, "team invite sent", map[string]any{"invite_id": invite.ID})
+	s.recordActivity(r, principal.UserID, domain.ActivityTeam, "team.invite_sent", "team", teamID, team.EventID,
+		"an invite was sent to join "+team.Name, domain.ActivityParticipants, map[string]any{"invite_id": invite.ID})
+	if invite.InviteeID != "" {
+		if inviter, err := s.store.UserByID(principal.UserID); err == nil {
+			if invitee, err := s.store.UserByID(invite.InviteeID); err == nil {
+				if _, err := s.mailService.SendTeamInvite(invite, team, inviter, invitee); err != nil {
+					s.logger.Warn("team invite mail not queued", "invite_id", invite.ID, "error", err)
+				}
+			}
+		}
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{"data": invite})
 }
 
@@ -346,6 +359,12 @@ func (s *Server) respondToInvite(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.audit(r, principal.UserID, "team.invite_"+string(updated.Status), "team", updated.TeamID, updated.EventID, "invite "+string(updated.Status), map[string]any{"invite_id": inviteID})
+	if updated.Status == domain.InviteAccepted {
+		if team, err := s.store.TeamByID(updated.TeamID); err == nil {
+			s.recordActivity(r, principal.UserID, domain.ActivityTeam, "team.member_joined", "team", team.ID, team.EventID,
+				principal.UserID+" joined "+team.Name, domain.ActivityParticipants, map[string]any{"invite_id": inviteID})
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": updated})
 }
 

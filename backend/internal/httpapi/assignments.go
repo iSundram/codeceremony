@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/iSundram/codeceremony/backend/internal/auth"
@@ -186,6 +187,10 @@ func (s *Server) createAssignments(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	s.recordActivity(r, principal.UserID, domain.ActivityJudging, "assignments.bulk_created", "event", event.ID, event.ID,
+		"an organizer created "+strconv.Itoa(len(created))+" judge assignments", domain.ActivityOrganizers, map[string]any{
+			"strategy": string(strategy), "created": len(created), "skipped": len(skipped),
+		})
 	s.audit(r, principal.UserID, "assignments.bulk_created", "event", event.ID, event.ID, "assignment builder", map[string]any{
 		"strategy":            string(strategy),
 		"projects":            len(projects),
@@ -307,6 +312,8 @@ func (s *Server) revokeAssignment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, principal.UserID, "assignment.revoked", "assignment", assignmentID, assignment.EventID, reason, nil)
+	s.recordActivity(r, principal.UserID, domain.ActivityJudging, "assignment.revoked", "assignment", assignmentID, assignment.EventID,
+		"an assignment was revoked", domain.ActivityOrganizers, map[string]any{"reason": reason})
 	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"id": assignmentID, "revoked": true}})
 }
 
@@ -354,6 +361,8 @@ func (s *Server) declareConflict(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	s.recordActivity(r, principal.UserID, domain.ActivityJudging, "judge.conflict_declared", "submission", assignment.ProjectID, assignment.EventID,
+		"a judge declared a conflict of interest", domain.ActivityOrganizers, map[string]any{"reason": reason, "assignment_id": assignment.ID})
 	s.audit(r, principal.UserID, "judge.conflict_declared", "project", assignment.ProjectID, assignment.EventID, reason, map[string]any{
 		"assignment_id": assignment.ID,
 		"conflict_id":   declaration.ID,
