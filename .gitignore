@@ -1,0 +1,51 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Go build and test output
+/backend/bin/
+/backend/dist/
+/backend/coverage.out
+/backend/*.test
+/backend/*.prof
+
+# Frontend dependencies and build output
+node_modules/
+.next/
+out/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Local databases and runtime state
+*.db
+*.sqlite
+*.sqlite3
+/backend/.tmp/
+/tmp/
+
+# Organizer-provided acceptance artifacts
+/fixtures.json
+/run.py
+/acceptance-report.local.txt
+
+# Generated design and media artifacts
+/assets/brand/logo/*.png
+/assets/brand/logo/*.jpg
+/assets/brand/logo/*.jpeg
+/assets/brand/logo/*.webp
+/assets/brand/marks/*.png
+/assets/brand/marks/*.jpg
+/assets/brand/marks/*.jpeg
+/assets/brand/marks/*.webp
+/artifacts/
+/screenshots/
+
+# Editor and OS files
+.DS_Store
+.idea/
+.vscode/
+*.swp
