@@ -19,6 +19,13 @@ type Store struct {
 	judgeProfiles      map[string]domain.JudgeProfile
 	conflicts          map[string]domain.ConflictDeclaration
 	rubrics            map[string]domain.Rubric
+	profiles           map[string]domain.UserProfile
+	questions          map[string]domain.HackathonQuestion
+	milestones         map[string]domain.HackathonMilestone
+	hosts              map[string]domain.HackathonHost
+	roster             map[string]domain.JudgeRosterEntry
+	invites            map[string]domain.TeamInvite
+	participations     map[string]domain.Participation
 	events             map[string]domain.Event
 	tracks             map[string]domain.Track
 	prizes             map[string]domain.Prize
@@ -41,6 +48,13 @@ func New(data seed.Data) *Store {
 		judgeProfiles:      make(map[string]domain.JudgeProfile, len(data.JudgeProfiles)),
 		conflicts:          make(map[string]domain.ConflictDeclaration),
 		rubrics:            make(map[string]domain.Rubric, len(data.Rubrics)),
+		profiles:           make(map[string]domain.UserProfile, len(data.Profiles)),
+		questions:          make(map[string]domain.HackathonQuestion, len(data.Questions)),
+		milestones:         make(map[string]domain.HackathonMilestone, len(data.Milestones)),
+		hosts:              make(map[string]domain.HackathonHost, len(data.Hosts)),
+		roster:             make(map[string]domain.JudgeRosterEntry, len(data.JudgeRoster)),
+		invites:            make(map[string]domain.TeamInvite, len(data.Invites)),
+		participations:     make(map[string]domain.Participation, len(data.Participations)),
 		events:             make(map[string]domain.Event, len(data.Events)),
 		tracks:             make(map[string]domain.Track, len(data.Tracks)),
 		prizes:             make(map[string]domain.Prize, len(data.Prizes)),
@@ -73,6 +87,27 @@ func New(data seed.Data) *Store {
 	}
 	for _, prize := range data.Prizes {
 		store.prizes[prize.ID] = prize
+	}
+	for _, profile := range data.Profiles {
+		store.profiles[profile.UserID] = profile.Clone()
+	}
+	for _, question := range data.Questions {
+		store.questions[question.ID] = question
+	}
+	for _, milestone := range data.Milestones {
+		store.milestones[milestone.ID] = milestone
+	}
+	for _, host := range data.Hosts {
+		store.hosts[host.ID] = host
+	}
+	for _, entry := range data.JudgeRoster {
+		store.roster[rosterKey(entry.EventID, entry.JudgeID)] = entry
+	}
+	for _, invite := range data.Invites {
+		store.invites[invite.ID] = invite.Clone()
+	}
+	for _, participation := range data.Participations {
+		store.participations[participationKey(participation.UserID, participation.EventID)] = participation
 	}
 	for _, team := range data.Teams {
 		store.teams[team.ID] = team
@@ -387,11 +422,32 @@ func (s *Store) CreateTeam(team domain.Team) error {
 	if team.EventID == "" || team.Name == "" || team.CaptainID == "" {
 		return domain.ErrValidation
 	}
-	if _, ok := s.events[team.EventID]; !ok {
+	event, ok := s.events[team.EventID]
+	if !ok {
 		return domain.ErrNotFound
 	}
 	if _, ok := s.users[team.CaptainID]; !ok {
 		return domain.ErrNotFound
+	}
+	if team.Scope == "" {
+		team.Scope = TeamScopeForEvent(event)
+	}
+	if team.Scope == domain.TeamScopeGlobal && !event.AllowGlobalTeams {
+		return domain.ErrValidation
+	}
+	if team.Availability == "" {
+		team.Availability = domain.TeamInviteOnly
+	}
+	switch team.Availability {
+	case domain.TeamOpenForMembers, domain.TeamInviteOnly, domain.TeamClosed, domain.TeamFull:
+	default:
+		return domain.ErrValidation
+	}
+	if event.MaxTeamSize > 0 && team.MaxSize == 0 {
+		team.MaxSize = event.MaxTeamSize
+	}
+	if team.MaxSize > 0 && event.MaxTeamSize > 0 && team.MaxSize > event.MaxTeamSize {
+		return domain.ErrValidation
 	}
 	if team.CreatedAt.IsZero() {
 		team.CreatedAt = time.Now().UTC()
@@ -401,7 +457,66 @@ func (s *Store) CreateTeam(team domain.Team) error {
 	}
 	s.teams[team.ID] = team
 	s.memberships[membershipKey(team.ID, team.CaptainID)] = domain.TeamMembership{ID: domain.NewID("tmem"), EventID: team.EventID, TeamID: team.ID, UserID: team.CaptainID, Role: domain.TeamRoleCaptain, Status: "active", JoinedAt: team.CreatedAt, UpdatedAt: team.CreatedAt}
+	s.rebuildParticipationLocked(team.CaptainID, team, domain.ParticipationCaptain)
 	return nil
+}
+
+// TeamScopeForEvent reports whether an event uses per-hackathon or global teams.
+func TeamScopeForEvent(event domain.Event) domain.TeamScope {
+	if event.AllowGlobalTeams {
+		return domain.TeamScopeGlobal
+	}
+	return domain.TeamScopeHackathon
+}
+
+func (s *Store) UpdateTeam(id string, update func(domain.Team) (domain.Team, error)) (domain.Team, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	team, ok := s.teams[id]
+	if !ok {
+		return domain.Team{}, domain.ErrNotFound
+	}
+	if team.Status != domain.TeamStatusActive {
+		return domain.Team{}, domain.ErrConflict
+	}
+	updated, err := update(team)
+	if err != nil {
+		return domain.Team{}, err
+	}
+	updated.ID = team.ID
+	updated.EventID = team.EventID
+	updated.CaptainID = team.CaptainID
+	updated.CreatedAt = team.CreatedAt
+	updated.Status = team.Status
+	switch updated.Availability {
+	case domain.TeamOpenForMembers, domain.TeamInviteOnly, domain.TeamClosed, domain.TeamFull:
+	default:
+		return domain.Team{}, domain.ErrValidation
+	}
+	if updated.Availability == domain.TeamOpenForMembers && len(updated.OpenRoles) == 0 {
+		return domain.Team{}, domain.ErrValidation
+	}
+	if updated.MaxSize > 0 && len(s.teamMembersLocked(id)) > updated.MaxSize {
+		return domain.Team{}, domain.ErrValidation
+	}
+	s.teams[id] = updated
+	return updated, nil
+}
+
+func (s *Store) rebuildParticipationLocked(userID string, team domain.Team, role domain.ParticipationRole) {
+	if team.EventID == "" {
+		return
+	}
+	key := participationKey(userID, team.EventID)
+	participation, ok := s.participations[key]
+	if !ok {
+		participation = domain.Participation{UserID: userID, EventID: team.EventID, CreatedAt: time.Now().UTC()}
+	}
+	participation.TeamID = team.ID
+	if role != "" {
+		participation.Role = role
+	}
+	s.participations[key] = participation
 }
 
 func (s *Store) ListTeams(eventID string) []domain.Team {
@@ -1656,3 +1771,23 @@ func cloneAnswers(answers map[string]string) map[string]string {
 }
 
 var nonAlphanumericSlug = regexp.MustCompile(`[^a-z0-9]+`)
+
+func (s *Store) UpdateEvent(id string, update func(domain.Event) (domain.Event, error)) (domain.Event, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	event, ok := s.events[id]
+	if !ok {
+		return domain.Event{}, domain.ErrNotFound
+	}
+	updated, err := update(event)
+	if err != nil {
+		return domain.Event{}, err
+	}
+	updated.ID = event.ID
+	updated.Slug = event.Slug
+	updated.CreatedAt = event.CreatedAt
+	updated.ResultsPublished = updated.ResultsPublished || event.ResultsPublished
+	updated.UpdatedAt = time.Now().UTC()
+	s.events[id] = updated
+	return updated, nil
+}

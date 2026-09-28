@@ -125,6 +125,12 @@ func (s *Server) createAssignments(w http.ResponseWriter, r *http.Request) {
 	}
 	reviewsPerProject := request.ReviewsPerProject
 	if reviewsPerProject <= 0 {
+		reviewsPerProject = event.ReviewsPerProject
+	}
+	if reviewsPerProject <= 0 {
+		reviewsPerProject = 1
+	}
+	if event.JudgingMode == domain.JudgingManual && request.ReviewsPerProject <= 0 {
 		reviewsPerProject = 1
 	}
 	if reviewsPerProject > 10 {
@@ -137,9 +143,13 @@ func (s *Server) createAssignments(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "no eligible projects were selected")
 		return
 	}
-	judges := s.selectedJudges(request.JudgeIDs)
+	judges := s.selectedJudges(event, request.JudgeIDs)
 	if len(judges) == 0 {
-		writeError(w, http.StatusBadRequest, "invalid_request", "no active judges were selected")
+		writeError(w, http.StatusBadRequest, "invalid_request", "no active judges from this hackathon roster were selected")
+		return
+	}
+	if strategy == domain.AssignmentManual && len(request.JudgeIDs) == 0 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "manual assignment requires an explicit judge list")
 		return
 	}
 
@@ -241,25 +251,38 @@ func (s *Server) selectedProjects(eventID string, projectIDs []string) []domain.
 	return selected
 }
 
-func (s *Server) selectedJudges(judgeIDs []string) []domain.JudgeProfile {
-	all := s.store.ListJudgeProfiles()
+// selectedJudges limits assignment to judges on the hackathon roster, plus the
+// global reviewer pool, so an organizer cannot assign a judge who is not staff
+// for this event.
+func (s *Server) selectedJudges(event domain.Event, judgeIDs []string) []domain.JudgeProfile {
 	wanted := map[string]struct{}{}
 	for _, id := range judgeIDs {
 		wanted[strings.TrimSpace(id)] = struct{}{}
 	}
-	selected := make([]domain.JudgeProfile, 0, len(judgeIDs))
-	for _, profile := range all {
+	eligible := map[string]struct{}{}
+	for _, entry := range s.store.JudgeRoster(event.ID) {
+		eligible[entry.JudgeID] = struct{}{}
+	}
+	for _, entry := range s.store.GlobalJudges() {
+		eligible[entry.JudgeID] = struct{}{}
+	}
+	selected := make([]domain.JudgeProfile, 0, len(eligible))
+	for userID := range eligible {
+		if len(wanted) > 0 {
+			if _, ok := wanted[userID]; !ok {
+				continue
+			}
+		}
+		profile, err := s.store.JudgeProfile(userID)
+		if err != nil {
+			profile = domain.JudgeProfile{UserID: userID, Active: true}
+		}
 		if !profile.Active {
 			continue
 		}
-		if len(wanted) == 0 {
-			selected = append(selected, profile)
-			continue
-		}
-		if _, ok := wanted[profile.UserID]; ok {
-			selected = append(selected, profile)
-		}
+		selected = append(selected, profile)
 	}
+	sort.Slice(selected, func(i, j int) bool { return selected[i].UserID < selected[j].UserID })
 	return selected
 }
 

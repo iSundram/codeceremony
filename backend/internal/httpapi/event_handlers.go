@@ -86,8 +86,12 @@ func (s *Server) createTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
+		Name         string   `json:"name"`
+		Description  string   `json:"description"`
+		Scope        string   `json:"scope"`
+		Availability string   `json:"availability"`
+		MaxSize      int      `json:"max_size"`
+		OpenRoles    []string `json:"open_roles"`
 	}
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
@@ -97,11 +101,30 @@ func (s *Server) createTeam(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "validation_error", "team name is required")
 		return
 	}
-	team := domain.Team{ID: domain.NewID("tm"), EventID: event.ID, Name: strings.TrimSpace(request.Name), Description: request.Description, CaptainID: principal.UserID, CreatedAt: s.now().UTC()}
+	team := domain.Team{
+		ID:           domain.NewID("tm"),
+		EventID:      event.ID,
+		Scope:        domain.TeamScope(strings.TrimSpace(request.Scope)),
+		Name:         strings.TrimSpace(request.Name),
+		Description:  request.Description,
+		CaptainID:    principal.UserID,
+		Availability: domain.TeamAvailability(strings.TrimSpace(request.Availability)),
+		MaxSize:      request.MaxSize,
+		OpenRoles:    request.OpenRoles,
+		CreatedAt:    s.now().UTC(),
+	}
 	if err := s.store.CreateTeam(team); err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "validation_error", "team could not be created")
+		switch {
+		case errors.Is(err, domain.ErrValidation):
+			writeError(w, http.StatusUnprocessableEntity, "validation_error", "team settings are not valid; a global team requires the hackathon to allow global teams, and an open team must list open roles")
+		case errors.Is(err, domain.ErrNotFound):
+			writeError(w, http.StatusNotFound, "not_found", "hackathon or captain not found")
+		default:
+			writeError(w, http.StatusInternalServerError, "internal_error", "the team could not be created")
+		}
 		return
 	}
+	s.audit(r, principal.UserID, "team.created", "team", team.ID, event.ID, "team created", map[string]any{"scope": team.Scope, "availability": team.Availability})
 	writeJSON(w, http.StatusCreated, map[string]any{"data": team})
 }
 
@@ -214,4 +237,62 @@ func (s *Server) createPrize(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r, principal.UserID, "event.prize_created", "prize", prize.ID, event.ID, "prize created", nil)
 	writeJSON(w, http.StatusCreated, map[string]any{"data": prize})
+}
+
+func (s *Server) updateTeam(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.PrincipalFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "authentication is required")
+		return
+	}
+	var request struct {
+		Name         *string   `json:"name"`
+		Description  *string   `json:"description"`
+		Availability *string   `json:"availability"`
+		MaxSize      *int      `json:"max_size"`
+		OpenRoles    *[]string `json:"open_roles"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	teamID := r.PathValue("teamID")
+	team, err := s.store.UpdateTeam(teamID, func(current domain.Team) (domain.Team, error) {
+		next := current
+		if request.Name != nil {
+			if strings.TrimSpace(*request.Name) == "" {
+				return current, domain.ErrValidation
+			}
+			next.Name = strings.TrimSpace(*request.Name)
+		}
+		if request.Description != nil {
+			next.Description = *request.Description
+		}
+		if request.Availability != nil {
+			next.Availability = domain.TeamAvailability(strings.TrimSpace(*request.Availability))
+		}
+		if request.MaxSize != nil {
+			if *request.MaxSize < 1 {
+				return current, domain.ErrValidation
+			}
+			next.MaxSize = *request.MaxSize
+		}
+		if request.OpenRoles != nil {
+			next.OpenRoles = *request.OpenRoles
+		}
+		return next, nil
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, domain.ErrValidation):
+			writeError(w, http.StatusUnprocessableEntity, "validation_error", "an open team must list open roles and max_size cannot be below the current member count")
+		case errors.Is(err, domain.ErrConflict):
+			writeError(w, http.StatusConflict, "team_archived", "this team is archived and cannot be updated")
+		default:
+			writeError(w, http.StatusNotFound, "not_found", "team not found")
+		}
+		return
+	}
+	s.audit(r, principal.UserID, "team.updated", "team", team.ID, team.EventID, "team updated", map[string]any{"availability": team.Availability})
+	writeJSON(w, http.StatusOK, map[string]any{"data": team})
 }

@@ -303,4 +303,63 @@ Work completed against the in-memory store, with a matching relational migration
 
 ### Still pending
 
-PostgreSQL adapter and migration execution, team invites, public voting and comments, notifications preferences and delivery, import/export, webhooks, and certificates.
+PostgreSQL adapter and migration execution, public voting and comments, notifications preferences and delivery, import/export, webhooks, and certificates.
+
+## 11. Shipped in the hackathon hosting tranche
+
+### Hackathon hosting
+
+- `GET /v1/events/{slug}` is now the full hackathon resource: tracks, prizes, hosts, milestones, custom questions, team policy, active rubric, and judge count, with the judge roster for staff.
+- `PATCH /v1/events/{slug}` for summary, lifecycle state, judging mode, submission and judging deadlines, team size policy, global teams, reviews per project, and leaderboard visibility.
+- Lifecycle states: `draft`, `registration_open`, `submissions_open`, `submissions_closed`, `judging`, `results_published`, `archived`.
+- Milestones and hosts as first-class records, both readable publicly.
+- `allow_global_teams` plus `min_team_size` and `max_team_size` define the team policy per hackathon.
+
+### Massive submission forms
+
+- Typed custom questions per hackathon: `short_text`, `long_text`, `url`, `select`, `checkbox`, `number`.
+- Audience scoping so submission, team, and participant forms stay separate.
+- Per-type validation with length limits, option allowlists, and number checks; required questions are enforced on submit.
+- Duplicate question prompts are rejected per audience; question keys are derived from the prompt.
+- `GET|POST /v1/events/{slug}/questions`, `PUT|DELETE /v1/organizer/questions/{questionID}`.
+- Submission create and update now carry `story`, `thumbnail_url`, and validated `custom_answers`, and `repo_url` must resolve to a host plus repository path.
+
+### Profiles and team formation
+
+- User profiles with headline, bio, location, skills, and validated links for `github`, `linkedin`, `portfolio`, `website`, `x`, `bluesky`, `devto`, `youtube`, and `discord`; each link must match its expected scheme.
+- Availability: `solo`, `looking_for_team`, `teamed`, with `seeking_team`, `open_to_invites`, `seeking_role`, and a per-hackathon `seeking_event_id`. Availability is the source of truth so the fields can never disagree.
+- `GET /v1/profiles/{userID}` includes teams, links, and hackathon appearances; `PATCH /v1/profile` updates it.
+- `GET /v1/discover` lists participants who are seeking a team or open to invites, excluding the caller.
+- Teams carry a scope (`hackathon` or `global`), availability (`open`, `invite_only`, `closed`, `full`), `max_size`, and `open_roles`; an open team must publish at least one open role.
+- Team invites by user id or email, with sender, message, expiry, accept, decline, and revoke; only captains and leaders can send them, and invitees who are not open to invites are refused.
+- `GET /v1/discover/teams` lists teams open for members with their members and open roles.
+
+### Judge rosters and assignment modes
+
+- Per-hackathon judge roster with headline, expertise, scope, and active flag, plus a global reviewer pool.
+- Adding a judge to a roster can also set track scopes and capacity in one call.
+- The assignment builder now only considers judges on that hackathon roster or the global pool, so an organizer cannot assign a judge who is not staff for the event.
+- `judging_mode` of `automatic` or `manual`; manual mode requires an explicit judge list, and `reviews_per_project` on the hackathon supplies the default reviewer count.
+
+### Leaderboards and result notifications
+
+- `GET /v1/events/{slug}/leaderboard` is public only after results are published and marked public; organizers always see it, and ineligible projects are hidden from the public board.
+- `POST /v1/organizer/events/{slug}/publish-results` publishes, moves the hackathon to `results_published`, records pending review counts, and notifies every active team member with their placement plus the whole judge roster.
+- `POST /v1/organizer/events/{slug}/unpublish-results` requires a reason, records an audit entry, and closes the public board.
+
+### Hackathon appearances
+
+- Participation history per user and hackathon with role, team, and result.
+- `GET /v1/users/{userID}/appearances` and `GET /v1/users/me/appearances`, also embedded in the profile view.
+- Participations are recorded when a team is created and when an invite is accepted.
+
+### Endpoints added
+
+- `PATCH /v1/events/{slug}`, `GET|POST /v1/events/{slug}/milestones`, `GET|POST /v1/events/{slug}/hosts`
+- `GET|POST /v1/events/{slug}/questions`, `PUT|DELETE /v1/organizer/questions/{questionID}`
+- `GET|POST /v1/events/{slug}/judges`, `DELETE /v1/events/{slug}/judges/{judgeID}`
+- `GET /v1/events/{slug}/leaderboard`, `POST /v1/organizer/events/{slug}/publish-results`, `POST /v1/organizer/events/{slug}/unpublish-results`
+- `GET /v1/profiles/{userID}`, `PATCH /v1/profile`, `GET /v1/discover`, `GET /v1/discover/teams`
+- `POST /v1/teams/{teamID}/invites`, `DELETE /v1/teams/{teamID}/invites/{inviteID}`, `GET /v1/invites`, `POST /v1/invites/{inviteID}`
+- `GET /v1/users/{userID}/appearances`, `PATCH /v1/teams/{teamID}`
+- `backend/migrations/0004_hackathon_hosting.sql`

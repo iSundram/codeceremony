@@ -20,3 +20,11 @@ type Prize struct {
 	Rank        int       `json:"rank"`
 	CreatedAt   time.Time `json:"created_at"`
 }
+
+// ScopeOrDefault reports the team scope an event uses when none is configured.
+func (e Event) ScopeOrDefault() TeamScope {
+	if e.AllowGlobalTeams {
+		return TeamScopeGlobal
+	}
+	return TeamScopeHackathon
+}

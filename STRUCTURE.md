@@ -124,11 +124,11 @@ The Go service is the backend boundary.
 - `cmd/codeceremony/`: executable entry point.
 - `internal/auth/`: password hashing, signed session tokens, request principals.
 - `internal/config/`: environment and runtime configuration.
-- `internal/domain/`: core types, roles, permissions, and invariants. Split by concern into `models.go`, `roles.go`, `judging.go`, `rubric.go`, `submissions.go`, and `eventconfig.go`.
-- `internal/httpapi/`: HTTP server, middleware, request/response handling, and handlers. Split by surface into `server.go`, `handlers.go`, `account_handlers.go`, `admin_handlers.go`, `event_handlers.go`, `assignments.go`, `rubrics.go`, `submissions.go`, and `results.go`.
+- `internal/domain/`: core types, roles, permissions, and invariants. Split by concern into `models.go`, `account.go`, `roles.go`, `judging.go`, `rubric.go`, `submissions.go`, `eventconfig.go`, `hackathons.go`, and `profiles.go`.
+- `internal/httpapi/`: HTTP server, middleware, request/response handling, and handlers. Split by surface into `server.go`, `handlers.go`, `account_handlers.go`, `admin_handlers.go`, `event_handlers.go`, `hackathons.go`, `community.go`, `assignments.go`, `rubrics.go`, `submissions.go`, and `results.go`.
 - `internal/seed/`: deterministic development seed data.
-- `internal/store/`: repository interface implementation and local persistence boundary.
-- `migrations/`: ordered database migrations. `0001_initial.sql` is the base schema, `0002_account_management.sql` covers accounts, `0003_judging_expansion.sql` covers assignments, rubrics, and the submission lifecycle.
+- `internal/store/`: repository interface implementation and local persistence boundary. `store.go` holds the core repository and `hackathons.go` holds hackathon hosting, profiles, invites, and participations.
+- `migrations/`: ordered database migrations. `0001_initial.sql` is the base schema, `0002_account_management.sql` covers accounts, `0003_judging_expansion.sql` covers assignments, rubrics, and the submission lifecycle, and `0004_hackathon_hosting.sql` covers custom questions, profiles, team formation, rosters, and publications.
 - `testdata/`: isolated test inputs and fixtures.
 
 The API is the only application component allowed to access the database directly. The current first slice uses an in-memory store behind the store boundary; PostgreSQL persistence is a later P0/P1 task.

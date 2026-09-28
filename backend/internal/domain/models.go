@@ -18,27 +18,43 @@ type User struct {
 }
 
 type Event struct {
-	ID               string    `json:"id"`
-	Slug             string    `json:"slug"`
-	Name             string    `json:"name"`
-	Description      string    `json:"description"`
-	Timezone         string    `json:"timezone"`
-	RegistrationOpen bool      `json:"registration_open"`
-	SubmissionsOpen  bool      `json:"submissions_open"`
-	SubmissionsClose time.Time `json:"submissions_close"`
-	ResultsPublished bool      `json:"results_published"`
-	CreatedAt        time.Time `json:"created_at"`
+	ID                 string         `json:"id"`
+	Slug               string         `json:"slug"`
+	Name               string         `json:"name"`
+	Summary            string         `json:"summary,omitempty"`
+	Description        string         `json:"description"`
+	Timezone           string         `json:"timezone"`
+	State              HackathonState `json:"state,omitempty"`
+	JudgingMode        JudgingMode    `json:"judging_mode,omitempty"`
+	RegistrationOpen   bool           `json:"registration_open"`
+	SubmissionsOpen    bool           `json:"submissions_open"`
+	SubmissionsClose   time.Time      `json:"submissions_close"`
+	JudgingClose       time.Time      `json:"judging_close,omitempty"`
+	TeamScope          TeamScope      `json:"team_scope,omitempty"`
+	MinTeamSize        int            `json:"min_team_size,omitempty"`
+	MaxTeamSize        int            `json:"max_team_size,omitempty"`
+	AllowGlobalTeams   bool           `json:"allow_global_teams,omitempty"`
+	ReviewsPerProject  int            `json:"reviews_per_project,omitempty"`
+	LeaderboardPublic  bool           `json:"leaderboard_public"`
+	ResultsPublished   bool           `json:"results_published"`
+	ResultsPublishedAt *time.Time     `json:"results_published_at,omitempty"`
+	CreatedAt          time.Time      `json:"created_at"`
+	UpdatedAt          time.Time      `json:"updated_at"`
 }
 
 type Team struct {
-	ID          string     `json:"id"`
-	EventID     string     `json:"event_id"`
-	Name        string     `json:"name"`
-	Description string     `json:"description"`
-	CaptainID   string     `json:"captain_id"`
-	Status      TeamStatus `json:"status"`
-	CreatedAt   time.Time  `json:"created_at"`
-	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
+	ID           string           `json:"id"`
+	EventID      string           `json:"event_id"`
+	Scope        TeamScope        `json:"scope"`
+	Name         string           `json:"name"`
+	Description  string           `json:"description"`
+	CaptainID    string           `json:"captain_id"`
+	Status       TeamStatus       `json:"status"`
+	Availability TeamAvailability `json:"availability"`
+	MaxSize      int              `json:"max_size,omitempty"`
+	OpenRoles    []string         `json:"open_roles,omitempty"`
+	CreatedAt    time.Time        `json:"created_at"`
+	DeletedAt    *time.Time       `json:"deleted_at,omitempty"`
 }
 
 type SubmissionStatus string
@@ -60,6 +76,7 @@ type Submission struct {
 	Title           string              `json:"title"`
 	Summary         string              `json:"summary"`
 	Description     string              `json:"description"`
+	Story           string              `json:"story,omitempty"`
 	ThumbnailURL    string              `json:"thumbnail_url,omitempty"`
 	VideoURL        string              `json:"video_url,omitempty"`
 	RepositoryURL   string              `json:"repo_url,omitempty"`

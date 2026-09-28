@@ -61,7 +61,31 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/admin/audit", s.requirePermission(domain.PermissionManagePlatform, s.adminAudit))
 	mux.HandleFunc("GET /v1/events", s.listEvents)
 	mux.Handle("POST /v1/events", s.requirePermission(domain.PermissionManageEvent, s.createEvent))
-	mux.HandleFunc("GET /v1/events/{slug}", s.event)
+	mux.HandleFunc("GET /v1/events/{slug}", s.hackathon)
+	mux.Handle("PATCH /v1/events/{slug}", s.requirePermission(domain.PermissionManageEvent, s.updateHackathon))
+	mux.HandleFunc("GET /v1/events/{slug}/milestones", s.listMilestones)
+	mux.Handle("POST /v1/events/{slug}/milestones", s.requirePermission(domain.PermissionManageEvent, s.createMilestone))
+	mux.HandleFunc("GET /v1/events/{slug}/hosts", s.listHosts)
+	mux.Handle("POST /v1/events/{slug}/hosts", s.requirePermission(domain.PermissionManageEvent, s.createHost))
+	mux.HandleFunc("GET /v1/events/{slug}/questions", s.listQuestions)
+	mux.Handle("POST /v1/events/{slug}/questions", s.requirePermission(domain.PermissionManageEvent, s.createQuestion))
+	mux.Handle("PUT /v1/organizer/questions/{questionID}", s.requirePermission(domain.PermissionManageEvent, s.updateQuestion))
+	mux.Handle("DELETE /v1/organizer/questions/{questionID}", s.requirePermission(domain.PermissionManageEvent, s.deleteQuestion))
+	mux.HandleFunc("GET /v1/events/{slug}/judges", s.listJudges)
+	mux.Handle("POST /v1/events/{slug}/judges", s.requirePermission(domain.PermissionManageEvent, s.addJudge))
+	mux.Handle("DELETE /v1/events/{slug}/judges/{judgeID}", s.requirePermission(domain.PermissionManageEvent, s.removeJudge))
+	mux.Handle("GET /v1/events/{slug}/leaderboard", s.optionalAuth(s.leaderboard))
+	mux.Handle("POST /v1/organizer/events/{slug}/publish-results", s.requirePermission(domain.PermissionManageEvent, s.publishResults))
+	mux.Handle("POST /v1/organizer/events/{slug}/unpublish-results", s.requirePermission(domain.PermissionManageEvent, s.unpublishResults))
+	mux.Handle("GET /v1/profiles/{userID}", s.requirePermission("", s.profileView))
+	mux.Handle("PATCH /v1/profile", s.requirePermission(domain.PermissionManageSelf, s.updateProfileSettings))
+	mux.Handle("GET /v1/discover", s.requirePermission(domain.PermissionManageSelf, s.discover))
+	mux.Handle("GET /v1/discover/teams", s.requirePermission("", s.teamOpportunities))
+	mux.Handle("POST /v1/teams/{teamID}/invites", s.requirePermission(domain.PermissionManageTeam, s.createInvite))
+	mux.Handle("DELETE /v1/teams/{teamID}/invites/{inviteID}", s.requirePermission(domain.PermissionManageTeam, s.revokeInvite))
+	mux.Handle("GET /v1/invites", s.requirePermission(domain.PermissionManageSelf, s.listInvites))
+	mux.Handle("POST /v1/invites/{inviteID}", s.requirePermission(domain.PermissionManageSelf, s.respondToInvite))
+	mux.Handle("GET /v1/users/{userID}/appearances", s.requirePermission("", s.appearances))
 	mux.HandleFunc("GET /v1/events/{slug}/projects", s.projects)
 	mux.HandleFunc("GET /v1/events/{slug}/tracks", s.listTracks)
 	mux.Handle("POST /v1/events/{slug}/tracks", s.requirePermission(domain.PermissionManageEvent, s.createTrack))
@@ -74,6 +98,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /v1/teams/{teamID}/members/{userID}/demote", s.requirePermission(domain.PermissionManageTeam, s.demoteMember))
 	mux.Handle("POST /v1/teams/{teamID}/transfer", s.requirePermission(domain.PermissionManageTeam, s.transferCaptaincy))
 	mux.Handle("DELETE /v1/teams/{teamID}/members/{userID}", s.requirePermission(domain.PermissionManageTeam, s.removeMember))
+	mux.Handle("PATCH /v1/teams/{teamID}", s.requirePermission(domain.PermissionManageTeam, s.updateTeam))
 	mux.Handle("DELETE /v1/teams/{teamID}", s.requirePermission(domain.PermissionManageTeam, s.deleteTeam))
 	mux.Handle("POST /v1/events/{slug}/submissions", s.requirePermission(domain.PermissionSubmitProject, s.createSubmission))
 	mux.Handle("GET /v1/judge/scores", s.requirePermission(domain.PermissionViewOwnScores, s.judgeScores))
@@ -109,6 +134,31 @@ func (s *Server) SetClock(now func() time.Time) {
 	if now != nil {
 		s.now = now
 	}
+}
+
+// optionalAuth attaches a principal when a valid session token is present and
+// otherwise leaves the request anonymous, for endpoints that are public but
+// behave differently for signed-in staff.
+func (s *Server) optionalAuth(next http.HandlerFunc) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := auth.TokenFromRequest(r)
+		if token == "" {
+			next(w, r)
+			return
+		}
+		claims, err := s.tokens.Parse(token)
+		if err != nil {
+			next(w, r)
+			return
+		}
+		user, err := s.store.UserByID(claims.Subject)
+		if err != nil {
+			next(w, r)
+			return
+		}
+		principal := auth.Principal{UserID: user.ID, Email: user.Email, Role: user.Role, SessionID: claims.SessionID}
+		next(w, r.WithContext(auth.WithPrincipal(r.Context(), principal)))
+	})
 }
 
 func (s *Server) middleware(next http.Handler) http.Handler {
@@ -294,9 +344,11 @@ func (s *Server) createSubmission(w http.ResponseWriter, r *http.Request) {
 		Title         string            `json:"title"`
 		Summary       string            `json:"summary"`
 		Description   string            `json:"description"`
+		Story         string            `json:"story"`
 		RepositoryURL string            `json:"repo_url"`
 		LiveURL       string            `json:"live_url"`
 		VideoURL      string            `json:"video_url"`
+		ThumbnailURL  string            `json:"thumbnail_url"`
 		Tags          []string          `json:"tags"`
 		CustomAnswers map[string]string `json:"custom_answers"`
 	}
@@ -306,6 +358,14 @@ func (s *Server) createSubmission(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.TrimSpace(request.Title) == "" || strings.TrimSpace(request.Summary) == "" {
 		writeError(w, http.StatusUnprocessableEntity, "validation_error", "title and summary are required")
+		return
+	}
+	if err := s.store.ValidateAnswers(event.ID, domain.AudienceSubmission, request.CustomAnswers); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "validation_error", err.Error())
+		return
+	}
+	if err := validateProjectLinks(request.RepositoryURL, request.LiveURL, request.VideoURL); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "validation_error", err.Error())
 		return
 	}
 	team, err := s.store.TeamByID(request.TeamID)
@@ -330,12 +390,15 @@ func (s *Server) createSubmission(w http.ResponseWriter, r *http.Request) {
 		Title:         strings.TrimSpace(request.Title),
 		Summary:       strings.TrimSpace(request.Summary),
 		Description:   request.Description,
-		RepositoryURL: request.RepositoryURL,
-		LiveURL:       request.LiveURL,
-		VideoURL:      request.VideoURL,
+		Story:         strings.TrimSpace(request.Story),
+		ThumbnailURL:  strings.TrimSpace(request.ThumbnailURL),
+		RepositoryURL: strings.TrimSpace(request.RepositoryURL),
+		LiveURL:       strings.TrimSpace(request.LiveURL),
+		VideoURL:      strings.TrimSpace(request.VideoURL),
 		Tags:          request.Tags,
 		CustomAnswers: request.CustomAnswers,
 		Status:        domain.SubmissionSubmitted,
+		Eligibility:   domain.EligibilityPending,
 		SubmittedAt:   &now,
 		UpdatedAt:     now,
 		Version:       1,

@@ -371,3 +371,27 @@ func (s *Server) resolveDuplicate(w http.ResponseWriter, r *http.Request) {
 	s.audit(r, principal.UserID, "duplicate.resolved", "submission", flag.ProjectID, flag.EventID, request.Note, map[string]any{"status": request.Status})
 	writeJSON(w, http.StatusOK, map[string]any{"data": flag})
 }
+
+func validateProjectLinks(repositoryURL, liveURL, videoURL string) error {
+	for name, value := range map[string]string{"repo_url": repositoryURL, "live_url": liveURL, "video_url": videoURL} {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		lowered := strings.ToLower(trimmed)
+		if !strings.HasPrefix(lowered, "https://") && !strings.HasPrefix(lowered, "http://") {
+			return errors.New(name + " must be a valid http or https url")
+		}
+	}
+	if trimmed := strings.TrimSpace(repositoryURL); trimmed != "" {
+		withoutScheme := trimmed
+		if index := strings.Index(withoutScheme, "://"); index >= 0 {
+			withoutScheme = withoutScheme[index+3:]
+		}
+		segments := strings.Split(strings.Trim(withoutScheme, "/"), "/")
+		if len(segments) < 3 {
+			return errors.New("repo_url must include a host and a repository path, for example https://github.com/org/repo")
+		}
+	}
+	return nil
+}
