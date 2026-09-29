@@ -270,6 +270,61 @@ def free_port() -> int:
 # ---------------------------------------------------------------- the suite
 
 
+def test_built_app(api: Client) -> None:
+    """The built frontend, served by the same binary.
+
+    The Go tests cover the embed and the client-route rule in isolation. What is
+    worth checking over a real connection is that the shell is actually served,
+    that a hard refresh on a client route works, that the brand assets the
+    sidebar references resolve, and that the API is not shadowed by the
+    client-route fallback.
+    """
+    section("The built single-page app")
+    # /account is deliberately excluded: the server-rendered account page still
+    # exists and redirects a signed-out visitor to sign-in, and a redirect is the
+    # more useful answer there than an app shell that would render an empty
+    # account. The SPA reaches it after the session resolves.
+    for path in ("/dashboard", "/organizer", "/judge", "/admin/audit", "/events"):
+        response = api.get(path)
+        check(
+            f"{path} serves the app shell",
+            response.status == 200 and 'id="root"' in response.body,
+            f"got {response.status}",
+        )
+
+    # A hard refresh on a client route is the case a naive fallback gets wrong.
+    deep = api.get("/organizer/sample-hack-2026/audit")
+    check("a hard refresh on a client route serves the shell", deep.status == 200, f"got {deep.status}")
+
+    for name in ("logo.svg", "icon.svg"):
+        asset = api.get(f"/brand/{name}")
+        check(f"the brand asset {name} is served", asset.status == 200 and "<svg" in asset.body, f"got {asset.status}")
+        # design.md 10.2: the assets are transparent, so a white rectangle would
+        # render as a box on the mist canvas.
+        check(
+            f"{name} has no opaque backdrop",
+            "rgb(255,255,255)" not in asset.body,
+            "the white backdrop was not removed",
+        )
+
+    # The API must not be swallowed by the client-route fallback.
+    for path in ("/v1/permissions", "/v1/events"):
+        response = api.get(path)
+        check(
+            f"{path} is still JSON, not the shell",
+            response.status == 200 and response.body.lstrip()[:1] in ("{", "["),
+            f"got {response.status}: {response.body[:80]}",
+        )
+
+    # A missing asset must 404 rather than come back as HTML with a 200, which is
+    # the failure that turns a broken bundle into a console mystery.
+    missing = api.get("/assets/index-NOTAREALHASH.js")
+    check(
+        "a missing asset does not resolve to the shell",
+        missing.status != 200 or "<!doctype" not in missing.body.lower(),
+        f"got {missing.status}",
+    )
+
 def test_acceptance_surface(api: Client) -> None:
     section("T1 — the public surface")
     gallery = api.get(f"/events/{FIXTURE_SLUG}")
@@ -1038,6 +1093,7 @@ def main() -> int:
     if args.base_url:
         api = Client(args.base_url)
         test_acceptance_surface(api)
+        test_built_app(api)
         test_isolation(api)
         test_organizer_surface(api)
         test_ballot(api)
@@ -1057,6 +1113,7 @@ def main() -> int:
 
         api = Client(base)
         test_acceptance_surface(api)
+        test_built_app(api)
         test_isolation(api)
         test_organizer_surface(api)
         test_write_safety(api)
