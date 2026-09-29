@@ -55,7 +55,7 @@ var webPages = map[string]string{
 // needed and caches it. Each page defines "content", so they cannot all be
 // parsed into one template set; the layout is shared and the content block is
 // per page.
-func (s *Server) renderPage(w http.ResponseWriter, r *http.Request, page string, data pageData) {
+func (s *Server) renderPage(w http.ResponseWriter, r *http.Request, page string, data shellData) {
 	tmpl, err := s.pageTemplate(page)
 	if err != nil {
 		s.logger.Error("could not render a page", "page", page, "error", err)
@@ -63,7 +63,7 @@ func (s *Server) renderPage(w http.ResponseWriter, r *http.Request, page string,
 		return
 	}
 	var buffer bytes.Buffer
-	if err := tmpl.ExecuteTemplate(&buffer, "layout", data); err != nil {
+	if err := tmpl.ExecuteTemplate(&buffer, "shell", data); err != nil {
 		s.logger.Error("could not execute a page template", "page", page, "error", err)
 		writeError(w, http.StatusInternalServerError, "render_error", "the page could not be rendered")
 		return
@@ -78,43 +78,33 @@ func (s *Server) renderPage(w http.ResponseWriter, r *http.Request, page string,
 	_, _ = w.Write(buffer.Bytes())
 }
 
-// pageData is the layout's view model. Every page gets the same chrome; the
-// page's own fields ride in Page.
-type pageData struct {
-	Title     string
-	Nav       string
-	EventSlug string
-	EventName string
-	Notice    string
-	// NoticeKind is "bad" for an error, empty otherwise.
-	NoticeKind string
-
-	SignedIn bool
-	IsJudge  bool
-	IsStaff  bool
-	User     domain.User
-	Event    domain.Event
-	Page     any
-}
-
-// withPage builds the layout view model, resolving the caller's identity from
-// the same session logic the API uses.
-func (s *Server) pageData(r *http.Request, title, nav string) pageData {
-	data := pageData{Title: title, Nav: nav}
+// pageData builds the shell view model, resolving the caller's identity from
+// the same session logic the API uses so the pages and the JSON routes cannot
+// disagree about who is signed in.
+func (s *Server) pageData(r *http.Request, title, nav string) shellData {
+	data := s.shellFor(r, title, nav, s.eventSlugFor(r))
 	if event, err := s.store.EventBySlug(seedSlug); err == nil {
-		data.EventSlug = event.Slug
+		if data.EventSlug == "" {
+			data.EventSlug = event.Slug
+		}
 		data.EventName = event.Name
 	}
 	if principal, ok := auth.PrincipalFromContext(r.Context()); ok {
 		if user, err := s.store.UserByID(principal.UserID); err == nil {
-			data.SignedIn = true
-			data.User = user
-			data.IsJudge = user.Role == domain.RoleJudge
-			data.IsStaff = user.Role.IsStaff()
+			data.Event = user2event(user)
+		}
+	}
+	if data.Event.ID == "" {
+		if event, err := s.store.EventBySlug(data.EventSlug); err == nil {
+			data.Event = event
 		}
 	}
 	return data
 }
+
+// user2event is a placeholder kept while the account app is migrated; the shell
+// only needs the signed-in user's role, which shellFor already resolved.
+func user2event(user domain.User) domain.Event { return domain.Event{} }
 
 // seedSlug is the fixture event, used only to title the masthead. The gallery
 // links are always derived from the event a page is actually about.
@@ -130,9 +120,15 @@ func (s *Server) pageTemplate(page string) (*template.Template, error) {
 	if tmpl, ok := s.pages[page]; ok {
 		return tmpl, nil
 	}
-	tmpl, err := template.New("codeceremony").Funcs(template.FuncMap{
-		"join": strings.Join,
-	}).ParseFS(webAssets, "webassets/templates/layout.html", "webassets/templates/"+file)
+	funcs := template.FuncMap{"join": strings.Join}
+	for name, fn := range s.uiFuncs() {
+		funcs[name] = fn
+	}
+	tmpl, err := template.New("codeceremony").Funcs(funcs).ParseFS(
+		webAssets,
+		"webassets/templates/shell.html",
+		"webassets/templates/"+file,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -816,7 +812,7 @@ func (s *Server) errorPage(w http.ResponseWriter, r *http.Request, status int, h
 		return
 	}
 	var buffer bytes.Buffer
-	if err := tmpl.ExecuteTemplate(&buffer, "layout", data); err != nil {
+	if err := tmpl.ExecuteTemplate(&buffer, "shell", data); err != nil {
 		s.logger.Error("could not render the error page", "error", err)
 		http.Error(w, detail, status)
 		return
@@ -851,8 +847,46 @@ func cleanValidation(message string) string {
 }
 
 // staticHandler serves the embedded stylesheet.
+// webStatic serves one embedded stylesheet.
+//
+// The token layer has to load before the layers that consume it, so the shell
+// links five files rather than concatenating them. Each is a separate route so
+// the browser can cache them independently and revalidate one without the rest.
 func (s *Server) webStatic(w http.ResponseWriter, r *http.Request) {
-	file, err := webAssets.Open("webassets/static/app.css")
+	name := r.PathValue("name")
+	if !embeddedStylesheets[name] {
+		http.NotFound(w, r)
+		return
+	}
+	s.serveEmbedded(w, r, "webassets/static/"+name, "text/css; charset=utf-8")
+}
+
+// webBrand serves the approved brand assets from section 10.2.
+//
+// The allowlist is deliberate: the embed contains a fixture with participant
+// data, and a path-traversal guess must not be able to read it. Only the two
+// approved files are reachable, and neither is user-supplied.
+func (s *Server) webBrand(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name != "logo.svg" && name != "icon.svg" {
+		http.NotFound(w, r)
+		return
+	}
+	s.serveEmbedded(w, r, "webassets/brand/"+name, "image/svg+xml")
+}
+
+// embeddedStylesheets is the set of stylesheets the shell may request.
+var embeddedStylesheets = map[string]bool{
+	"tokens.css":     true,
+	"base.css":       true,
+	"components.css": true,
+	"shell.css":      true,
+	"apps.css":       true,
+	"app.css":        true, // superseded by the layers above, still routed
+}
+
+func (s *Server) serveEmbedded(w http.ResponseWriter, r *http.Request, path, contentType string) {
+	file, err := webAssets.Open(path)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -863,7 +897,7 @@ func (s *Server) webStatic(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "public, max-age=3600")
 	_, _ = w.Write(data)
 }
@@ -875,7 +909,8 @@ func (s *Server) registerWeb(mux *routeMux) {
 	// so pages go through optionalAuth and then re-check permissions per page.
 	page := func(handler http.HandlerFunc) http.Handler { return s.optionalAuth(handler) }
 
-	mux.Handle("GET /static/app.css", http.HandlerFunc(s.webStatic))
+	mux.Handle("GET /static/{name}", http.HandlerFunc(s.webStatic))
+	mux.Handle("GET /brand/{name}", http.HandlerFunc(s.webBrand))
 	mux.Handle("GET /{$}", page(s.webHome))
 	mux.Handle("GET /login", page(s.webLogin))
 	mux.Handle("POST /login", s.guard(ratelimitLogin, http.HandlerFunc(s.webLoginPost)))

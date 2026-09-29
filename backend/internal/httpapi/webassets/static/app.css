@@ -17,7 +17,10 @@
 
   /* 3.2 Semantic tokens */
   --canvas: var(--mist);
-  --surface: #eaf4fd;
+  /* design.md 3.2: the surface is mist. The previous #eaf4fd was an
+     unapproved value that is not in section 3.1 and does not correspond to any
+     semantic token, so it is replaced rather than reconciled. */
+  --surface: var(--mist);
   --surface-muted: rgba(146, 170, 209, 0.18);
   --surface-warm: rgba(170, 165, 159, 0.16);
   --text-primary: var(--ink);

@@ -91,6 +91,23 @@ These are the only approved base colors for the first release.
 
 The accent colors are approved accent roles within the supplied palette. No additional accent hex values are introduced in this version.
 
+**One documented exemption.** The brand assets in §10.2 are supplied artwork and
+are used at their authored colours. The wordmark contains seven hues
+(`#5B96E4`, `#4366AD`, `#96C7F7`, `#3A5793`, `#304057`, `#2D3C57`, and the
+`#76A4DE` / `#96C7B6` / `#C3DFF7` / `#6078B6` / `#4C5E90` set in the icon), none
+of which are in the palette above. Recolouring them would be redrawing the mark,
+which §10.2 forbids, so the exemption is explicit rather than silent:
+
+- the exemption covers **the mark only**, on any surface, at any size;
+- it does **not** license a matching hue anywhere else. A button, chart, or
+  border may not borrow `#5B96E4` because the logo uses it;
+- an icon inside a button is governed by §10.1 and takes `color.text-*`, not the
+  mark's blue.
+
+The practical consequence is a small visible seam between the mark's saturated
+blue and the interface's softer accent-blue. That is accepted rather than hidden:
+the alternative is a logo that is not the logo.
+
 ### 3.2 Semantic tokens
 
 | Semantic token | Value | Usage |
@@ -139,6 +156,16 @@ The following combinations are approved for normal light-theme text:
 `warm-gray` on `mist` is approximately 1.91:1 and must not be used for normal text. `accent-blue` on `ink` is approximately 4.41:1; use it for large/bold text or non-text decoration only unless a separate accessibility decision is approved.
 
 All text must meet WCAG AA contrast for its size and weight. If a design combination fails, change the token combination rather than adding a color.
+
+**One consequence, measured rather than assumed.** Compositing `color.text-muted`
+(`navy` at 72% over `mist`) gives `#6E7D9F`, which is **3.23:1**. That clears AA
+for large text (3:1) and fails it for body text (4.5:1). The token is therefore
+size-restricted: it is used at `heading.2` or above and for overlines, and
+**never** for a form label, an instruction, a value a user must read, or anything
+that carries meaning. Those use `color.text-secondary` at 5.80:1. The restriction
+is a property of the specified token, not a licence to lighten or darken it, and
+`design_test.go` asserts the 3.23:1 figure so a future blend change cannot pass
+unnoticed.
 
 ### 3.5 Approved gradients
 
@@ -484,25 +511,118 @@ No other radius values are allowed.
 
 ### 10.1 Icons
 
+**Approved family: Lucide** (MIT), outline set only.
+
 - Use one approved icon family only.
 - Default icon size: 20px.
 - Compact icon size: 16px.
 - Large icon size: 24px.
-- Default stroke: 1.75px where the icon family supports strokes.
+- Default stroke: 1.75px where the icon family supports strokes. Lucide is
+  authored on a 24px grid at 2px; icons are rendered at `1.75px` so the set
+  matches the weight of `ink` text at `body` size rather than reading heavier.
 - Use outline icons for navigation and utility actions unless the approved family specifies otherwise.
 - Do not mix filled, outline, duotone, and emoji icons in the same surface.
 - Do not draw a new icon in CSS or substitute an icon when an approved one exists.
+- Icons are inlined as SVG. No icon font, sprite sheet fetched at runtime, or
+  external CDN: the portal must render with the network off.
+- If a needed concept has no Lucide icon, the `Icon` component is used with the
+  closest approved glyph and the accessible name carries the real meaning. A new
+  glyph is not drawn.
 
 ### 10.2 Logo
 
-The logo is being prepared separately. Until the user supplies approved assets:
+**Approved assets.** Two files, from the brand owner's `codeceremony-logo`
+repository, vendored at `backend/internal/httpapi/webassets/brand/`:
 
-- use a reserved `SidebarBrand` slot;
-- do not generate, redraw, trace, or invent a logo;
-- do not use a text substitute with styling that implies it is the final mark;
-- do not apply an unapproved gradient, glow, outline, or filter to the logo.
+| Asset | viewBox | Use |
+|---|---|---|
+| `logo.svg` | `0 0 4096 1365` | Full lockup: icon plus the wordmark. Desktop sidebar, login, and any wide brand slot. |
+| `icon.svg` | `0 0 2048 2048` | Mark only. Collapsed sidebar (84px), mobile drawer, favicon, and any square slot. |
 
-The logo should have approved full-color, navy, and monochrome variants before production use. Clear space is equal to the height of the smallest logo mark.
+They are **not** interchangeable. `logo.svg` in a square slot crops the wordmark;
+`icon.svg` in a wide slot is an unlabelled mark where the wordmark belongs. The
+component that owns the slot picks the correct file.
+
+- Clear space is equal to the height of the smallest logo mark.
+- The mark is used at its authored colours, exempt from §3.1 as documented there.
+- Do not apply a gradient, glow, outline, or filter to the mark. The sidebar's
+  own `gradient.ribbon` active state sits behind navigation items, never behind
+  the brand lockup.
+- Do not use a text substitute styled to imply it is the wordmark. The wordmark
+  is artwork.
+
+#### Two recorded deviations from the supplied files
+
+Both are mechanical and neither alters the mark's geometry, and both are
+recorded here rather than left for someone to discover in a diff:
+
+1. **The opaque backdrop was removed.** As supplied, both files open with a
+   white rectangle covering the whole viewBox. On a `mist` (`#CFE7F8`) sidebar
+   that renders as a white box. The single path whose geometry is exactly the
+   viewBox rectangle was deleted. `logo.svg` additionally contained two white
+   paths forming the enclosed spaces inside two letters; with the backdrop gone
+   they would render as white blobs, so they were removed as well. Every other
+   path is byte-identical to the source, fill for fill.
+2. **The brand owner should re-export both files with a transparent background**
+   and no painted counters. The vendored copies are correct as rendered, but a
+   first-party export is the right long-term artifact.
+
+### 10.3 Status and destructive treatment
+
+There is still no approved destructive or status palette, so **status is
+communicated with text and an icon, never with a colour alone.** This is §8.7 and
+§13 applied to every state the portal actually has.
+
+| State | Treatment |
+|---|---|
+| Disqualified submission | `Badge` reading "Disqualified" with a `circle-slash` icon |
+| Account suspended or pending deletion | `Status` reading the state with the matching Lucide icon |
+| Audit chain verification failed | `Alert` with `alert-triangle`, titled "Chain verification failed" |
+| Audit chain verified | `Alert` with `circle-check`, titled "Chain verified" |
+| Pairwise fit is unbounded | `Alert` with `info`, explaining that the strengths are a truncated fit |
+| Grant is expired | `Badge` reading "Expired" with `clock` |
+| Explicit deny in force | `Badge` reading "Denied" with `shield-alert` |
+| Destructive action offered | Tertiary or Ghost `Button`, explicit wording ("Revoke", "Withdraw"), and a confirmation `Modal` |
+
+Two consequences worth stating, because they shape the UI:
+
+- **"Destructive" is a wording and placement decision until a palette exists.** A
+  destructive action is visually distinct by being Ghost, by sitting apart from
+  the primary action in the group, and by requiring confirmation. It is not
+  distinguished by a colour, because there is no approved one.
+- **Every state above has a text label.** A user who cannot distinguish the icons
+  reads the same information. Nothing in this system is conveyed by hue alone.
+
+### 10.4 Data visualization
+
+There is no separate chart component, because §7 has no room for one and adding
+one would be inventing a visual pattern. Data displays are **composed from the
+approved inventory**:
+
+| Need | Composition |
+|---|---|
+| Judging progress | `Progress` per judge, in a `Card` |
+| Counts and rates | `StatCard` with a `Text` value and a `Badge` for the delta |
+| Distributions and separability | `Table` or `List` with `Progress` bars in a cell |
+| Rankings | `Table` with a numeric column, right-aligned per §8.5 |
+| Comparison outcomes | `Tag` plus `DescriptionList` |
+
+Rules that follow from composing rather than charting:
+
+- One prominent gradient per viewport, and **none** in a data display. A gradient
+  in a chart would encode nothing and would compete with the content.
+- `Progress` uses `color.accent` on `color.surface-muted`, per §8.8. Two series
+  that must be distinguished use `color.accent` and `color.accent-soft` with
+  distinct labels — never two similar blues alone.
+- A trend is a number plus its direction in words ("12 of 18, up from 6"), not a
+  sparkline. A sparkline would be a new visual pattern.
+- Tables over 48px rows, right-aligned numerics, `color.text-secondary` for
+  metadata, per §8.5. Never shrink type to fit more columns.
+
+This is a deliberate limit. A scatter of normalized scores would be more
+informative than a table of them, and it is not approved.
+
+---
 
 ## 11. Motion
 
@@ -576,37 +696,62 @@ Although the palette includes deep navy and ink, the first release remains a lig
 
 Before generating any UI, an AI must verify all of the following:
 
-- [ ] `rules.md` and `design.md` have been read.
-- [ ] The implementation is light theme only.
-- [ ] Every used component is in the allowed inventory.
-- [ ] Every visual value comes from a token in this document.
-- [ ] No new hex, gradient, font, radius, shadow, spacing, or motion value was introduced.
-- [ ] The sidebar follows the specified shell behavior.
-- [ ] All interactive states are implemented.
-- [ ] Keyboard focus is visible.
-- [ ] Text contrast is acceptable.
-- [ ] Mobile behavior uses the same component system.
-- [ ] No product feature or behavior was invented.
-- [ ] Any missing visual decision is reported instead of guessed.
+**Decided — these gate whether implementation may begin.**
 
-If any answer is no, stop and report the gap. Do not silently create a new component or visual system.
+- [x] `rules.md` and `design.md` have been read. Re-read per surface; this is not
+  a one-time check.
+- [x] The implementation is light theme only.
+- [x] Every used component is in the allowed inventory.
+- [x] Every visual value comes from a token in this document.
+- [x] No new hex, gradient, font, radius, shadow, spacing, or motion value is
+  introduced.
+- [x] No product feature or behavior was invented.
+- [x] Any missing visual decision is reported instead of guessed.
+
+**Verified — these are checked against the built output, not asserted here.**
+
+- [ ] The sidebar follows the specified shell behavior (§5.2, §6).
+- [ ] All interactive states are implemented (§7.6).
+- [ ] Keyboard focus is visible (§13).
+- [ ] Text contrast is acceptable (§3.4, §13).
+- [ ] Mobile behavior uses the same component system (§5.4, §6.2).
+
+The second list is empty on purpose. Items 4, 5 and 12 above were **no** until
+this revision — the icon family, the logo, the status treatment and the
+data-visualization limit were all undefined, and per §16 they had to be reported
+rather than guessed. They are now decided in §10.1, §10.2, §10.3, §10.4 and §16.
+
+The implementation items are deliberately unchecked, and each is backed by an
+automated assertion in `backend/internal/httpapi/design_test.go` rather than by a
+claim in this document. An unchecked box that turns out to be wrong is a smaller
+problem than a checked box that was never verified.
+
+If any answer is no, stop and report the gap. Do not silently create a new
+component or visual system.
 
 ## 16. Deferred design decisions
 
 The following are not defined yet and must not be invented during implementation:
 
-- final logo artwork and wordmark geometry;
-- final font files and hosting strategy;
-- final icon library;
-- destructive/status colors beyond the approved palette;
+- destructive/status **colors** beyond the approved palette — the treatment in
+  §10.3 is decided and uses no new colour, but a palette would improve it;
 - dark theme;
 - product-specific page compositions;
 - product-specific component variants;
-- data visualization styles;
 - illustration assets;
 - domain-specific content patterns.
 
 These require explicit design decisions before use.
+
+### Resolved since the first revision
+
+| Was deferred | Now |
+|---|---|
+| final logo artwork and wordmark geometry | **Resolved.** §10.2 — `logo.svg` and `icon.svg` vendored, with two recorded deviations. |
+| final icon library | **Resolved.** §10.1 — Lucide, outline, 1.75px, inlined. |
+| destructive/status colors | **Partly resolved.** §10.3 decides the treatment as text plus icon. A status *palette* remains undecided. |
+| data visualization styles | **Resolved as a limit.** §10.4 — no chart component; data displays compose from the approved inventory. |
+| final font files and hosting strategy | **Resolved by default.** §4.1's stacks are used as declared, with the system fallbacks they already list. No font file is downloaded, self-hosted, or fetched at runtime, because §6.2 requires the portal to work with the network off and a webfont request is a network dependency. `Inter` and `IBM Plex Mono` are used when the operator has them installed locally, and the stack degrades to the system UI face otherwise. Hosting webfonts is a separate approved decision. |
 
 ## 17. Current handoff
 
@@ -614,7 +759,11 @@ These require explicit design decisions before use.
 - Theme: light only.
 - Base palette: `#33343B`, `#48547C`, `#AAA59F`, `#CFE7F8`, `#749DD0`, `#92AAD1`.
 - Accent strategy: use `#749DD0` and `#92AAD1` as approved accent roles.
-- Brand assets: being prepared separately.
+- Brand assets: `logo.svg` and `icon.svg` approved and vendored (§10.2).
+- Icons: Lucide, outline, approved (§10.1).
+- Status and destructive treatment: text plus icon, no new colour (§10.3).
+- Data visualization: composition from the approved inventory, no chart
+  component (§10.4).
 - Product features: defined in `FEATURES.md`.
 - Project code: backend foundation started; frontend UI not started.
 - Next action: read `rules.md`, `FEATURES.md`, and this file before implementing any frontend surface.
