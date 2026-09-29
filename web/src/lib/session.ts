@@ -54,9 +54,9 @@ export function useSession(): Session {
 /** Resolves the session once, before the router renders anything. */
 export async function loadSession(): Promise<Session> {
   try {
-    const response = await api.whoami();
+    const response = await api.me();
     publish({
-      user: response.data.user,
+      user: response.data,
       loading: false,
       error: null,
       refresh: loadSession,

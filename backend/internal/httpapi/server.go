@@ -266,6 +266,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /v1/organizer/rubrics/{rubricID}/publish", s.requireAction(authz.ActionRubricPublish, s.publishRubric))
 	mux.Handle("POST /v1/organizer/rubrics/{rubricID}/archive", s.requireAction(authz.ActionRubricArchive, s.archiveRubric))
 	mux.HandleFunc("GET /v1/judging/rubric", s.activeRubric)
+	mux.Handle("GET /v1/organizer/panel", s.requireAction(authz.ActionResultsRead, s.organizerPanel))
 	mux.Handle("GET /v1/organizer/progress", s.requireAction(authz.ActionProgressRead, s.progress))
 	mux.Handle("GET /v1/organizer/reviews", s.requireAction(authz.ActionReviewReadPeer, s.organizerReviews))
 	mux.Handle("GET /v1/organizer/results", s.requireAction(authz.ActionResultsRead, s.results))
@@ -944,6 +945,84 @@ func (s *Server) saveReview(w http.ResponseWriter, r *http.Request) {
 			"a judge completed a review", domain.ActivityParticipants, map[string]any{"review_id": saved.ID, "rubric_version": saved.RubricVersion})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": saved, "rubric": rubric})
+}
+
+// organizerPanel returns the event's judges with their workload.
+//
+// An organizer's question is never "how many reviews are done" but "who is
+// holding the event up", and that needs per-judge counts. It is a separate read
+// from progress because progress is a single aggregate while this is a list, and
+// because the aggregate is safe to cache and this is not.
+func (s *Server) organizerPanel(w http.ResponseWriter, r *http.Request) {
+	eventID := r.URL.Query().Get("event_id")
+	if eventID == "" {
+		eventID = "evt_01"
+	}
+	if _, err := s.store.EventByID(eventID); err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "event not found")
+		return
+	}
+	roster := s.store.JudgeRoster(eventID)
+	assignments := s.store.ListAssignments(eventID, "")
+	reviews := s.store.AllReviews(eventID)
+
+	type panelRow struct {
+		ID          string `json:"id"`
+		DisplayName string `json:"display_name"`
+		Email       string `json:"email"`
+		Assigned    int    `json:"assigned"`
+		Started     int    `json:"started"`
+		Completed   int    `json:"completed"`
+		HasConflict bool   `json:"has_conflict"`
+		Active      bool   `json:"active"`
+	}
+
+	assigned := map[string]int{}
+	conflicted := map[string]bool{}
+	for _, assignment := range assignments {
+		assigned[assignment.JudgeID]++
+		if s.store.HasConflict(eventID, assignment.JudgeID, assignment.ProjectID) {
+			conflicted[assignment.JudgeID] = true
+		}
+	}
+	byJudge := map[string]map[string]bool{}
+	completed := map[string]int{}
+	for _, review := range reviews {
+		projects, ok := byJudge[review.JudgeID]
+		if !ok {
+			projects = map[string]bool{}
+			byJudge[review.JudgeID] = projects
+		}
+		projects[review.ProjectID] = true
+		if review.Submitted {
+			completed[review.JudgeID]++
+		}
+	}
+
+	rows := make([]panelRow, 0, len(roster))
+	for _, entry := range roster {
+		row := panelRow{
+			ID:          entry.JudgeID,
+			Assigned:    assigned[entry.JudgeID],
+			Completed:   completed[entry.JudgeID],
+			Started:     len(byJudge[entry.JudgeID]),
+			HasConflict: conflicted[entry.JudgeID],
+			Active:      entry.Active,
+		}
+		if user, err := s.store.UserByID(entry.JudgeID); err == nil {
+			row.DisplayName = user.DisplayName
+			row.Email = user.Email
+		}
+		rows = append(rows, row)
+	}
+	// Sorted so a panel list does not reshuffle between two identical requests.
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Assigned != rows[j].Assigned {
+			return rows[i].Assigned > rows[j].Assigned
+		}
+		return rows[i].ID < rows[j].ID
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"data": rows})
 }
 
 func (s *Server) progress(w http.ResponseWriter, r *http.Request) {

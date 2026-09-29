@@ -8,6 +8,7 @@ import (
 	"github.com/iSundram/codeceremony/backend/internal/auth"
 	"github.com/iSundram/codeceremony/backend/internal/authz"
 	"github.com/iSundram/codeceremony/backend/internal/domain"
+	"github.com/iSundram/codeceremony/backend/internal/store"
 )
 
 func (s *Server) authMethods(w http.ResponseWriter, r *http.Request) {
@@ -16,6 +17,14 @@ func (s *Server) authMethods(w http.ResponseWriter, r *http.Request) {
 	}})
 }
 
+// profile returns the caller's own account record.
+//
+// It is scoped by the session and not by anything in the request, so there is no
+// path by which a caller reads another account's record. The teams and
+// participations ride along because they are the same identity read: an account
+// page that had to guess a second endpoint for "the teams I am in" would either
+// fetch a platform-wide list and filter in the browser, which ships every team's
+// membership to the client, or add an endpoint that does not exist.
 func (s *Server) profile(w http.ResponseWriter, r *http.Request) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	user, err := s.store.UserByID(principal.UserID)
@@ -23,7 +32,23 @@ func (s *Server) profile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "user not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": user})
+	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
+		"user":           user,
+		"profile":        mustProfile(s.store, principal.UserID),
+		"memberships":    s.store.TeamMembershipsForUser(principal.UserID),
+		"participations": s.store.Participations(principal.UserID, ""),
+	}})
+}
+
+// mustProfile returns the profile or the zero value. A missing profile is a
+// legitimate state for an account that has never edited one, so it is not an
+// error worth failing a read over.
+func mustProfile(portal *store.Store, userID string) domain.UserProfile {
+	profile, err := portal.ProfileOrDefault(userID)
+	if err != nil {
+		return domain.UserProfile{UserID: userID}
+	}
+	return profile
 }
 
 func (s *Server) updateProfile(w http.ResponseWriter, r *http.Request) {

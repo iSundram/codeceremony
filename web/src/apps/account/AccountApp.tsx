@@ -17,7 +17,7 @@ import {
   Th,
   Tr,
 } from "../../components/data";
-import { api, ApiError, type Profile, type SessionSummary, type Team } from "../../lib/api";
+import { api, ApiError, type Membership, type Profile, type SessionSummary } from "../../lib/api";
 import { useSession } from "../../lib/session";
 
 /**
@@ -137,14 +137,17 @@ function roleSurfaces(role: string): { to: string; label: string; icon: string }
 }
 
 function Teams() {
-  const [teams, setTeams] = useState<Team[] | null>(null);
+  // The teams come from the caller's own profile read, not from a listing. A
+  // platform-wide teams endpoint would have the client filter it, which ships
+  // every membership in the portal to the browser.
+  const [teams, setTeams] = useState<Membership[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
     api
-      .teams()
-      .then((response) => live && setTeams(response.data))
+      .profile()
+      .then((response) => live && setTeams(response.data.memberships))
       .catch((caught) => live && setError(describe(caught)));
     return () => {
       live = false;
@@ -167,19 +170,19 @@ function Teams() {
         <Table caption="Teams you belong to, and the role you hold in each.">
           <thead>
             <tr>
+              <Th>Event</Th>
               <Th>Team</Th>
               <Th>Your role</Th>
-              <Th numeric>Members</Th>
             </tr>
           </thead>
           <tbody>
             {teams.map((team) => (
-              <Tr key={team.id}>
-                <Td strong>{team.name}</Td>
+              <Tr key={`${team.event_id}-${team.team_id}`}>
+                <Td meta>{team.event_id}</Td>
+                <Td strong>{team.team_id}</Td>
                 <Td>
                   <Badge icon="users">{team.role}</Badge>
                 </Td>
-                <Td numeric>{team.member_count}</Td>
               </Tr>
             ))}
           </tbody>
@@ -205,10 +208,10 @@ function ProfileEditor() {
       .profile()
       .then((response) => {
         if (!live) return;
-        setProfile(response.data);
-        setHeadline(response.data.headline ?? "");
-        setOrganization(response.data.organization ?? "");
-        setBio(response.data.bio ?? "");
+        setProfile(response.data.profile);
+        setHeadline(response.data.profile.headline ?? "");
+        setOrganization(response.data.profile.organization ?? "");
+        setBio(response.data.profile.bio ?? "");
       })
       .catch((caught) => live && setError(describe(caught)));
     return () => {
@@ -223,7 +226,12 @@ function ProfileEditor() {
     setSaved(false);
     try {
       const response = await api.updateProfile({ headline, organization, bio });
-      setProfile(response.data);
+      // The update returns the account record, so the editor stays in step with
+      // what the server stored rather than with what was typed.
+      setProfile(response.data.profile);
+      setHeadline(response.data.profile.headline ?? "");
+      setOrganization(response.data.profile.organization ?? "");
+      setBio(response.data.profile.bio ?? "");
       setSaved(true);
     } catch (caught) {
       setError(describe(caught));

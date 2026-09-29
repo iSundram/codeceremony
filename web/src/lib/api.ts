@@ -53,6 +53,14 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * The API root.
+ *
+ * Every route is registered under /v1 on the server and the client is written
+ * without the prefix, so there is one place to change and one place for the
+ * contract test to compare. The client and the server must not both know the
+ * prefix independently, or a change to one silently breaks the other.
+ */
 const BASE = "/v1";
 
 interface RequestOptions {
@@ -100,7 +108,10 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 /** The portal's JSON API, grouped the way the applications consume it. */
 export const api = {
   // ---- session and account
-  whoami: () => request<{ data: { user: SessionUser; teams: SessionTeam[] } }>("/account/whoami"),
+  // GET /v1/me is the session identity. It is deliberately not a "whoami"
+  // profile endpoint: the answer is "which account is this cookie", and nothing
+  // more, so it cannot be used to read another account.
+  me: () => request<{ data: SessionUser }>("/me"),
   signIn: (email: string, password: string) =>
     request<{ data: { user: SessionUser } }>("/auth/login", {
       method: "POST",
@@ -120,10 +131,14 @@ export const api = {
   },
 
   // ---- account
-  profile: () => request<{ data: Profile }>("/account/profile"),
+  profile: () => request<{ data: AccountRecord }>("/account/profile"),
   updateProfile: (patch: Partial<Profile>) =>
-    request<{ data: Profile }>("/account/profile", { method: "PATCH", body: patch }),
-  teams: () => request<{ data: Team[] }>("/teams"),
+    request<{ data: AccountRecord }>("/account/profile", { method: "PATCH", body: patch }),
+  // The caller's own teams ride on the profile read rather than on a separate
+  // listing. A "teams I am in" endpoint that returned a platform-wide list and
+  // expected the client to filter it would ship every membership in the portal
+  // to the browser, which is exactly the pattern the event rules call out.
+  //
   sessions: () => request<{ data: SessionSummary[] }>("/account/sessions"),
 
   // ---- submissions
@@ -157,10 +172,10 @@ export const api = {
 
   // ---- organizer
   progress: (slug: string) => request<{ data: Progress }>(`/organizer/progress?event_slug=${slug}`),
-  panel: (slug: string) => request<{ data: JudgeRow[] }>(`/organizer/panel?event_slug=${slug}`),
+  panel: (slug: string) => request<{ data: JudgeRow[] }>(`/organizer/panel?event_id=${slug}`),
   results: (slug: string) => request<{ data: ResultRow[]; method: string }>(`/organizer/results?event_slug=${slug}`),
   publishResults: (slug: string) =>
-    request<{ data: { published: boolean } }>("/organizer/publish", { method: "POST", body: { event_slug: slug } }),
+    request<{ data: { published: boolean } }>(`/organizer/events/${slug}/publish-results`, { method: "POST" }),
 
   // ---- audit and grants, the accountability surface
   audit: (query: AuditQuery = {}) => {
@@ -199,11 +214,18 @@ export interface SessionUser {
   state?: string;
 }
 
-export interface SessionTeam {
-  id: string;
-  name: string;
-  role: string;
+export interface Membership {
+  team_id: string;
   event_id: string;
+  role: string;
+}
+
+/** The caller's own account record, as GET /v1/account/profile returns it. */
+export interface AccountRecord {
+  user: SessionUser;
+  profile: Profile;
+  memberships: Membership[];
+  participations: { event_id: string; scope: string; registered_at: string }[];
 }
 
 export interface EventSummary {
