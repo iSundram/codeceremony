@@ -762,7 +762,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "the session user no longer exists")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": user})
+	writeJSON(w, http.StatusOK, map[string]any{"data": user.Redacted()})
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
@@ -806,7 +806,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		s.auditEntry(r, auth.Principal{UserID: user.ID, Role: user.Role, Email: user.Email}, authz.ActionAccountReadSelf),
 		"user", user.ID, "", "signed in", true,
 	))
-	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"access_token": token, "user": user}})
+	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"access_token": token, "user": user.Redacted()}})
 }
 
 // logout clears the cookie and revokes the session behind it. Clearing the

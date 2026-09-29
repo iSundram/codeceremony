@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 
 import { Badge, EmptyState, ErrorState, Skeleton, Status } from "../../components/feedback";
+import { Icon } from "../../lib/icons";
 import { Button, LinkButton, SearchField } from "../../components/controls";
 import { Pagination, PageHead, Tabs, TabLink } from "../../components/shell";
 import {
@@ -16,6 +17,7 @@ import {
   Td,
   Th,
   Tr,
+  Tag,
 } from "../../components/data";
 import { api, ApiError, type Project } from "../../lib/api";
 import { useSession } from "../../lib/session";
@@ -48,9 +50,103 @@ export function PublicApp() {
   const slug = isGalleryRoute ? "" : (segments[0] ?? "");
   const view = search.get("view") ?? (isGalleryRoute ? "gallery" : segments[1] ?? "");
 
+  // The project route is declared with a named parameter rather than a splat,
+  // so it arrives here from the other branch. Every project card in the gallery
+  // links to it, and it had no route at all: the click landed on the app-level
+  // not-found from a page that looked perfectly healthy.
+  if (params.projectID) return <ProjectApp projectID={params.projectID} />;
+
   if (view === "gallery") return <GalleryApp eventSlug={slug} />;
   if (slug) return <EventApp slug={slug} />;
   return <EventDirectory />;
+}
+
+/**
+ * One project, for a signed-in visitor.
+ *
+ * Deliberately read-only. A submission is the team's work, and the routes that
+ * change it require team captaincy; a public page that offered an edit would be
+ * offering it to anyone who read the URL.
+ */
+function ProjectApp({ projectID }: { projectID: string }) {
+  const [project, setProject] = useState<Project | null>(null);
+  const [teamName, setTeamName] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let live = true;
+    setLoading(true);
+    setError(null);
+    api
+      .submission(projectID)
+      .then((response) => {
+        if (!live) return;
+        setProject(response.data);
+        setTeamName(response.team?.name ?? "");
+      })
+      .catch((caught) => live && setError(describe(caught)))
+      .finally(() => live && setLoading(false));
+    return () => {
+      live = false;
+    };
+  }, [projectID]);
+
+  if (loading) return <Skeleton lines={6} />;
+  if (error) return <ErrorState title="That project could not be loaded" body={error} />;
+  if (!project) return null;
+
+  return (
+    <section className="stack stack-5">
+      <PageHead title={project.title} lede={project.summary} />
+      <Card>
+        <CardBody>
+          <div className="stack stack-4">
+            <div className="cluster cluster-3">
+              <Status icon="circle-check">{project.status.replace(/_/g, " ")}</Status>
+              {teamName ? <Tag>{teamName}</Tag> : null}
+            </div>
+            {project.description ? <p className="card__lede">{project.description}</p> : null}
+            {project.story ? <p className="card__lede">{project.story}</p> : null}
+            <div className="cluster cluster-3">
+              {project.repo_url ? (
+                <a
+                  className="btn btn--tertiary"
+                  href={project.repo_url}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                >
+                  <Icon name="external-link" size={16} />
+                  Repository
+                </a>
+              ) : null}
+              {project.live_url ? (
+                <a
+                  className="btn btn--tertiary"
+                  href={project.live_url}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                >
+                  <Icon name="external-link" size={16} />
+                  Live site
+                </a>
+              ) : null}
+            </div>
+            {project.tags.length > 0 ? (
+              <div className="cluster cluster-3">
+                {project.tags.map((tag) => (
+                  <Tag key={tag}>{tag}</Tag>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </CardBody>
+      </Card>
+      <LinkButton to="/events" variant="ghost" icon="chevron-left">
+        Back to events
+      </LinkButton>
+    </section>
+  );
 }
 
 function RetryButton({ onRetry }: { onRetry: () => void }) {
@@ -505,24 +601,20 @@ function ProjectCard({ project, signedIn }: { project: Project; signedIn: boolea
   return (
     <Card interactive>
       <div className="cluster cluster-2">
-        {project.track_name ? <Badge icon="route">{project.track_name}</Badge> : null}
-        {/* design.md 10.3: the outcome is words and a glyph, never a colour. */}
-        {project.rank ? (
-          <Status icon="trophy">{ordinal(project.rank)} place</Status>
-        ) : (
-          <Status icon="clock" muted>
-            {project.status}
-          </Status>
-        )}
-        {project.low_information ? (
-          <Badge icon="circle-alert" variant="outline">
-            Low information
-          </Badge>
-        ) : null}
+        {/* design.md 10.3: the outcome is words and a glyph, never a colour.
+            The project list carries a track id, not a track name, and no rank:
+            both were declared on the client and never sent, so the badge they fed
+            rendered blank rather than wrong, which is harder to notice. */}
+        {project.track_id ? <Badge icon="route">{project.track_id}</Badge> : null}
+        <Status icon={project.status === "submitted" ? "circle-check" : "pencil"} muted>
+          {project.status.replace(/_/g, " ")}
+        </Status>
       </div>
       <h3 className="card__title">{project.title}</h3>
       {project.summary ? <p className="card__lede">{project.summary}</p> : null}
-      {project.team_name ? <p className="table__meta">by {project.team_name}</p> : null}
+      {project.eligibility && project.eligibility !== "pending" ? (
+        <p className="table__meta">{project.eligibility}</p>
+      ) : null}
       {project.tags && project.tags.length > 0 ? (
         <div className="cluster cluster-2">
           {project.tags.slice(0, 4).map((tag) => (

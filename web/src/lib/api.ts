@@ -327,21 +327,33 @@ export interface EventDetail extends EventSummary {
   tracks: { id: string; name: string; slug: string }[];
 }
 
+/**
+ * A project, which on the wire is a domain.Submission.
+ *
+ * This had two interfaces — Project and Submission — describing the same object,
+ * and they drifted: one declared track_name, rank and repository_url, which the
+ * server never sends, so every badge derived from them rendered permanently
+ * blank while the compiler agreed with both.
+ */
 export interface Project {
   id: string;
+  event_id: string;
+  team_id: string;
+  track_id: string;
   title: string;
   summary: string;
-  track_id: string;
-  track_name?: string;
-  team_name?: string;
+  description: string;
+  story: string;
+  repo_url: string;
+  live_url: string;
+  video_url: string;
+  thumbnail_url: string;
+  tags: string[];
   status: string;
-  repository_url?: string;
-  live_url?: string;
-  tags?: string[];
-  score?: number | null;
-  rank?: number | null;
-  low_information?: boolean;
-  submitted_at?: string;
+  eligibility: string;
+  submitted_at: string;
+  updated_at: string;
+  version: number;
 }
 
 export interface ProjectQuery {
@@ -350,16 +362,7 @@ export interface ProjectQuery {
   page?: number;
 }
 
-export interface Submission {
-  id: string;
-  title: string;
-  summary: string;
-  description: string;
-  version: number;
-  status: string;
-  track_id: string;
-  team_id: string;
-}
+export type Submission = Project;
 
 // ---- shapes the server sends, transcribed from backend/internal/domain
 //

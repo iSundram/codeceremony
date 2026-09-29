@@ -27,6 +27,22 @@ type User struct {
 	CreatedAt    time.Time    `json:"created_at"`
 }
 
+// Redacted is the user as any client is allowed to see one.
+//
+// It exists because the password hash became part of the persisted record, and
+// `json:"-"` was what had been keeping it out of responses. Removing the tag to
+// make the hash survive a restart is right for the data file and wrong for the
+// wire: domain.User is serialised directly by the session, sign-in and profile
+// handlers, so the hash went out in the response body and into the browser's
+// network tab on every sign-in.
+//
+// A credential does not belong in a struct that is also the storage type. The
+// honest shape is a type that cannot carry one, which is what this is.
+func (u User) Redacted() User {
+	u.PasswordHash = ""
+	return u
+}
+
 type Event struct {
 	ID                 string         `json:"id"`
 	Slug               string         `json:"slug"`

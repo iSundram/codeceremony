@@ -51,7 +51,29 @@ function renderOrganizer(route: string) {
 }
 
 function project(id: string, title: string): Project {
-  return { id, title, summary: "", track_id: "trk_1", status: "submitted" };
+  // Every field the wire sends. The fixture used to declare five of them, and
+  // the real type has twenty, so a test fixture that is a strict subset is a
+  // fixture of an object the server does not send.
+  return {
+    id,
+    event_id: "evt_1",
+    team_id: "tm_1",
+    track_id: "trk_1",
+    title,
+    summary: "",
+    description: "",
+    story: "",
+    repo_url: "",
+    live_url: "",
+    video_url: "",
+    thumbnail_url: "",
+    tags: [],
+    status: "submitted",
+    eligibility: "pending",
+    submitted_at: "2026-03-01T00:00:00Z",
+    updated_at: "2026-03-01T00:00:00Z",
+    version: 1,
+  };
 }
 
 beforeEach(async () => {

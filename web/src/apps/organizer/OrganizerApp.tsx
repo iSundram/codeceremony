@@ -356,8 +356,8 @@ function SubmissionsApp() {
               {projects.map((project) => (
                 <Tr key={project.id}>
                   <Td strong>{project.title}</Td>
-                  <Td meta>{project.track_name ?? project.track_id}</Td>
-                  <Td meta>{project.team_name ?? "—"}</Td>
+                  <Td meta>{project.track_id || "—"}</Td>
+                  <Td meta>{project.team_id || "—"}</Td>
                   <Td>
                     <Status icon={project.status === "submitted" ? "circle-check" : "pencil"}>
                       {project.status}

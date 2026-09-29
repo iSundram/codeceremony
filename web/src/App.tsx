@@ -93,6 +93,10 @@ export function App() {
             <Route path="/judge/*" element={<JudgeApp />} />
             <Route path="/organizer/*" element={<OrganizerApp />} />
             <Route path="/admin/*" element={<AdminApp />} />
+            {/* Every project card in the gallery links here. With no route, the
+                link landed on the app-level not-found, so a public visitor who
+                clicked "Details" got a dead end on a page that looked fine. */}
+            <Route path="/projects/:projectID" element={<PublicApp />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </div>

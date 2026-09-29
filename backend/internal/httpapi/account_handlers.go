@@ -33,7 +33,7 @@ func (s *Server) profile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
-		"user":           user,
+		"user":           user.Redacted(),
 		"profile":        mustProfile(s.store, principal.UserID),
 		"memberships":    s.store.TeamMembershipsForUser(principal.UserID),
 		"participations": s.store.Participations(principal.UserID, ""),
@@ -71,7 +71,7 @@ func (s *Server) updateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, principal.UserID, "account.profile_updated", "user", principal.UserID, "", "", nil)
-	writeJSON(w, http.StatusOK, map[string]any{"data": user})
+	writeJSON(w, http.StatusOK, map[string]any{"data": user.Redacted()})
 }
 
 func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
@@ -113,7 +113,7 @@ func (s *Server) exportAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r, principal.UserID, "account.exported", "user", principal.UserID, "", "", nil)
 	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
-		"user":          user,
+		"user":          user.Redacted(),
 		"memberships":   s.store.TeamMembershipsForUser(principal.UserID),
 		"sessions":      s.store.ListSessions(principal.UserID),
 		"notifications": s.store.ListNotifications(principal.UserID),
