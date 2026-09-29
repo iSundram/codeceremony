@@ -39,6 +39,14 @@ func (s *Server) submissionDetail(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "forbidden", "you cannot view this submission")
 		return
 	}
+	// The ETag is what makes a later edit safe: a client that read this can
+	// assert it is editing what it saw, and one that did not read is no worse off
+	// than before.
+	setETag(w, versionedVersion(project.Version))
+	if precondition := checkPrecondition(r, versionedVersion(project.Version)); precondition != nil {
+		s.writePreconditionError(w, versionedVersion(project.Version), precondition)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data":     project,
 		"team":     s.teamSummary(project.TeamID),
@@ -111,6 +119,15 @@ func (s *Server) editSubmission(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "submissions_closed", "this event is closed for submissions")
 		return
 	}
+	// Checked before anything is written, so a stale editor is refused rather
+	// than told it saved. The check is repeated inside the store's lock by
+	// ReviseSubmission, because a captain editing in one tab while an organizer
+	// edits in another would otherwise pass here and lose the race silently.
+	current := versionedVersion(project.Version)
+	if precondition := checkPrecondition(r, current); precondition != nil {
+		s.writePreconditionError(w, current, precondition)
+		return
+	}
 	if strings.TrimSpace(project.Title) == "" {
 		writeError(w, http.StatusUnprocessableEntity, "validation_error", "title and summary are required")
 		return
@@ -169,6 +186,9 @@ func (s *Server) editSubmission(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	// The new ETag goes out on every successful write, so a client that edits
+	// twice in a row does not have to re-read to learn the new version.
+	setETag(w, versionedVersion(updated.Version))
 	s.audit(r, principal.UserID, "submission.revised", "submission", updated.ID, updated.EventID, request.Reason, map[string]any{"version": version.Version})
 	s.recordActivity(r, principal.UserID, domain.ActivitySubmission, "submission.revised", "submission", updated.ID, updated.EventID,
 		updated.Title+" was revised to version "+strconv.Itoa(version.Version), domain.ActivityParticipants, map[string]any{"version": version.Version, "reason": request.Reason})
@@ -200,6 +220,14 @@ func (s *Server) submitRevision(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "submissions_closed", "this event is closed for submissions")
 		return
 	}
+	// Submitting freezes the work, so a client that read an older revision must
+	// not be able to submit it. This is the one write where acting on stale input
+	// is irreversible rather than merely annoying.
+	current := versionedVersion(project.Version)
+	if precondition := checkPrecondition(r, current); precondition != nil {
+		s.writePreconditionError(w, current, precondition)
+		return
+	}
 	updated, err := s.store.SetSubmissionStatus(projectID, domain.SubmissionSubmitted, "", principal.UserID)
 	if err != nil {
 		if errors.Is(err, domain.ErrConflict) {
@@ -213,6 +241,7 @@ func (s *Server) submitRevision(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "the version history could not be recorded")
 		return
 	}
+	setETag(w, versionedVersion(updated.Version))
 	s.audit(r, principal.UserID, "submission.submitted", "submission", updated.ID, updated.EventID, "captain submitted", map[string]any{"version": updated.Version})
 	s.recordActivity(r, principal.UserID, domain.ActivitySubmission, "submission.submitted", "submission", updated.ID, updated.EventID,
 		updated.Title+" is submitted and awaiting review", domain.ActivityPublic, map[string]any{"version": updated.Version})

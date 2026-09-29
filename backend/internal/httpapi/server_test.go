@@ -105,6 +105,33 @@ func request(t *testing.T, server *Server, method, path, token string, body any)
 	return recorder
 }
 
+// requestWithHeader issues a request carrying one extra header, which is how the
+// conditional-write tests pass If-Match and If-None-Match.
+func requestWithHeader(t *testing.T, server *Server, method, path, token string, body any, name, value string) *httptest.ResponseRecorder {
+	t.Helper()
+	var reader io.Reader
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("json.Marshal() error = %v", err)
+		}
+		reader = bytes.NewReader(encoded)
+	}
+	req := httptest.NewRequest(method, path, reader)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if name != "" {
+		req.Header.Set(name, value)
+	}
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, req)
+	return recorder
+}
+
 func TestHealth(t *testing.T) {
 	server, _, _ := newTestServer(t)
 	response := request(t, server, http.MethodGet, "/healthz", "", nil)

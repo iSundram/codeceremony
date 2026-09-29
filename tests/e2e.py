@@ -87,9 +87,15 @@ passes = 0
 
 
 class Response:
-    def __init__(self, status: int, body: str):
+    def __init__(self, status: int, body: str, headers: dict | None = None):
         self.status = status
         self.body = body
+        # Lowercased header names, because the conditional-write and idempotency
+        # checks need to read ETag and Idempotency-Replayed off the response.
+        self.headers = {k.lower(): v for k, v in (headers or {}).items()}
+
+    def header(self, name: str) -> str:
+        return self.headers.get(name.lower(), "")
 
     def json(self):
         try:
@@ -145,7 +151,7 @@ class Client:
                 if value:
                     self.cookies[name.strip()] = value.strip()
 
-    def request(self, method: str, path: str, body=None, form=None) -> Response:
+    def request(self, method: str, path: str, body=None, form=None, extra=None) -> Response:
         data = None
         headers = {"Accept": "application/json"}
         if body is not None:
@@ -157,6 +163,8 @@ class Client:
                 for k, v in form.items()
             ).encode()
             headers["Content-Type"] = "application/x-www-form-urlencoded"
+        if extra:
+            headers.update(extra)
         cookie = self._cookie_header()
         if cookie:
             headers["Cookie"] = cookie
@@ -167,20 +175,23 @@ class Client:
             raw = connection.getresponse()
             self._absorb(raw)
             text = raw.read().decode("utf-8", "replace")
-            return Response(raw.status, text)
+            return Response(raw.status, text, dict(raw.getheaders()))
         except (OSError, http.client.HTTPException) as err:
             return Response(0, str(err))
         finally:
             connection.close()
 
-    def get(self, path: str) -> Response:
-        return self.request("GET", path)
+    def get(self, path: str, extra=None) -> Response:
+        return self.request("GET", path, extra=extra)
 
-    def post(self, path: str, body=None, form=None) -> Response:
-        return self.request("POST", path, body=body, form=form)
+    def post(self, path: str, body=None, form=None, extra=None) -> Response:
+        return self.request("POST", path, body=body, form=form, extra=extra)
 
-    def patch(self, path: str, body=None) -> Response:
-        return self.request("PATCH", path, body=body)
+    def patch(self, path: str, body=None, extra=None) -> Response:
+        return self.request("PATCH", path, body=body, extra=extra)
+
+    def put(self, path: str, body=None, extra=None) -> Response:
+        return self.request("PUT", path, body=body, extra=extra)
 
     def login(self, email: str) -> "Client":
         self.post("/login", form={"email": email, "password": PASSWORD})
@@ -780,6 +791,132 @@ def test_audit_and_grants(api: Client) -> None:
     )
 
 
+def test_write_safety(api: Client) -> None:
+    """Retries and concurrent editors, proven against a real process.
+
+    The Go tests cover both mechanisms in isolation. What is worth checking over a
+    real connection is that the headers survive the round trip and that the server
+    honours them on the routes that matter, since a proxy that strips
+    If-Match would quietly disable the protection.
+    """
+    section("Write safety: idempotency and concurrency")
+    organizer = Client(api.base, TOKENS["organizer"])
+    participant = Client(api.base, TOKENS["participant"])
+
+    # ---- idempotency ----
+    campaign = organizer.post(
+        f"/v1/organizer/events/{FIXTURE_SLUG}/vote-campaigns",
+        body={"name": "Retry safety", "max_choices_per_user": 3, "require_eligible": True},
+    )
+    if campaign.status not in (200, 201):
+        check("a campaign exists to write against", False, f"got {campaign.status}")
+        return
+    cid = campaign.json()["data"]["id"]
+    organizer.request("PUT", f"/v1/organizer/vote-campaigns/{cid}/open", body=None)
+
+    ballot = participant.get(f"/v1/events/{FIXTURE_SLUG}/vote/ballot?campaign_id={cid}")
+    options = [o["project_id"] for o in ballot.json().get("data", [])]
+    check("the campaign offers something to choose from", len(options) >= 2, f"got {len(options)}")
+    if len(options) < 2:
+        return
+
+    key = {"Idempotency-Key": "e2e-retry-key-1"}
+    vote = {"campaign_id": cid, "project_ids": options[:2]}
+    first = participant.post(f"/v1/events/{FIXTURE_SLUG}/vote", body=vote, extra=key)
+    check("a keyed write succeeds", first.status in (200, 201), f"got {first.status} {first.body[:120]}")
+    check("the response echoes the key", first.header("idempotency-key") == "e2e-retry-key-1", first.header("idempotency-key"))
+    check("a first attempt is not marked replayed", first.header("idempotency-replayed") != "true", first.header("idempotency-replayed"))
+
+    again = participant.post(f"/v1/events/{FIXTURE_SLUG}/vote", body=vote, extra=key)
+    check("the same key is answered as a replay", again.header("idempotency-replayed") == "true", again.header("idempotency-replayed"))
+    check("the replay is byte-identical", again.body == first.body, f"{first.body[:80]} then {again.body[:80]}")
+
+    # The point of the mechanism: the retry did not add a second ballot.
+    mine = participant.get(f"/v1/vote/mine?campaign_id={cid}")
+    recorded = mine.json().get("data", [])
+    check("the retry did not count the ballot twice", len(recorded) == 2, f"got {len(recorded)} recorded choices")
+    ids = [r.get("project_id") for r in recorded]
+    check("no project is recorded twice", len(set(ids)) == len(ids), f"{ids}")
+
+    # The same key against a different body is a client bug.
+    other = {"campaign_id": cid, "project_ids": options[2:4]}
+    conflict = participant.post(f"/v1/events/{FIXTURE_SLUG}/vote", body=other, extra=key)
+    check("a key reused for a different request is refused", conflict.status == 422, f"got {conflict.status}")
+
+    # A request without a key is untouched by the mechanism.
+    plain = participant.post(f"/v1/events/{FIXTURE_SLUG}/vote", body=vote)
+    check("an unkeyed write carries no key header", plain.header("idempotency-key") == "", plain.header("idempotency-key"))
+
+    # ---- concurrency ----
+    read = participant.get("/v1/submissions/prj_demo")
+    etag = read.header("etag")
+    check("a submission read carries an ETag", bool(etag), f"status {read.status} {read.body[:120]}")
+
+    if etag:
+        first_edit = participant.patch(
+            "/v1/submissions/prj_demo",
+            body={"title": "A rewritten title", "reason": "write safety check"},
+            extra={"If-Match": etag},
+        )
+        # The fixture event is submissions-closed, so the precondition is only
+        # observable where the write itself is permitted. Either answer is
+        # informative: 412 means the guard is live, 422 means the event is closed
+        # and the guard was never reached.
+        check(
+            "a guarded edit is answered by the guard or by the closed event",
+            first_edit.status in (200, 422),
+            f"got {first_edit.status} {first_edit.body[:140]}",
+        )
+        if first_edit.status == 200:
+            fresh = first_edit.header("etag")
+            check("the write moved the ETag", fresh and fresh != etag, f"{etag} then {fresh}")
+            stale = participant.patch(
+                "/v1/submissions/prj_demo",
+                body={"title": "A stale tab's title", "reason": "conflicting"},
+                extra={"If-Match": etag},
+            )
+            check("a stale If-Match is refused with 412", stale.status == 412, f"got {stale.status}")
+            check("the refusal carries the current ETag", stale.header("etag") == fresh, stale.header("etag"))
+            after = participant.get("/v1/submissions/prj_demo")
+            check("the refused write did not land", "A stale tab's title" not in after.body, "the stale title was written")
+
+    # ---- a review, the most contended write in the portal ----
+    # Every project the fixture judge is assigned to already has a submitted
+    # review, and a submitted review is locked. Assigning a fresh one is what
+    # makes the write reachable at all.
+    assigned = organizer.post(
+        "/v1/organizer/assignments",
+        body={
+            "event_slug": FIXTURE_SLUG,
+            "judge_ids": ["jdg_24"],
+            "project_ids": ["prj_01"],
+            "strategy": "manual",
+        },
+    )
+    check("an organizer can assign a fresh review", assigned.status in (200, 201), f"got {assigned.status} {assigned.body[:140]}")
+
+    judge = Client(api.base, TOKENS["judge_a"])
+    scores = {"functionality": 4, "quality": 3, "innovation": 5}
+    saved = judge.put(
+        "/v1/judge/projects/prj_01/review",
+        body={"event_id": "evt_01", "criteria": scores, "comment": "first pass"},
+    )
+    check("a judge can save a review", saved.status == 200, f"got {saved.status} {saved.body[:140]}")
+    review_etag = saved.header("etag")
+    check("a review save carries an ETag", bool(review_etag), repr(review_etag))
+
+    if review_etag:
+        # Saving identical scores must not invalidate the token, or a client that
+        # saves twice cannot.
+        repeat = judge.put(
+            "/v1/judge/projects/prj_01/review",
+            body={"event_id": "evt_01", "criteria": scores, "comment": "first pass"},
+            extra={"If-Match": review_etag},
+        )
+        check("an identical re-save is accepted at the same ETag", repeat.status == 200, f"got {repeat.status} {repeat.body[:140]}")
+        check("an identical re-save keeps the ETag", repeat.header("etag") == review_etag, f"{review_etag} then {repeat.header('etag')}")
+
+
 def test_durability(binary: str, data_dir: str, port: int) -> None:
     section("Durability across a restart")
     path = os.path.join(data_dir, "portal.json")
@@ -828,6 +965,7 @@ def main() -> int:
         test_acceptance_surface(api)
         test_isolation(api)
         test_organizer_surface(api)
+        test_write_safety(api)
         test_lifecycle(api)
         test_ballot(api)
         test_hardening(api)

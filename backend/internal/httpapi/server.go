@@ -416,7 +416,12 @@ func (s *Server) requireAction(action authz.Action, next http.HandlerFunc) http.
 		if target.EventID != "" {
 			ctx = context.WithValue(ctx, routeEventKey{}, target.EventID)
 		}
-		next(w, r.WithContext(ctx))
+		// Idempotency sits after authentication and authorization on purpose. A
+		// replay is served from a remembered response, so putting it earlier
+		// would hand one caller's response to whoever presented the key, and
+		// putting it before authorization would let a refused request occupy a
+		// key that a permitted one later needs.
+		s.idempotent(next)(w, r.WithContext(ctx))
 	})
 }
 
@@ -805,6 +810,19 @@ func (s *Server) judgeScores(w http.ResponseWriter, r *http.Request) {
 		eventID = "evt_01"
 	}
 	reviews := s.store.ReviewsForJudge(eventID, principal.UserID)
+	// One ETag for the whole set rather than one per review, because the client's
+	// next write is a save, not a fetch, and a single token is what it can hold
+	// without tracking a list. The digest covers every review, so any change to
+	// any of them invalidates it.
+	parts := make([]string, 0, len(reviews)*2)
+	for _, review := range reviews {
+		parts = append(parts, reviewVersion(review).digest)
+	}
+	setETag(w, contentVersion(parts...))
+	if precondition := checkPrecondition(r, contentVersion(parts...)); precondition != nil {
+		s.writePreconditionError(w, contentVersion(parts...), precondition)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": reviews})
 }
 
@@ -848,6 +866,17 @@ func (s *Server) saveReview(w http.ResponseWriter, r *http.Request) {
 	if err := rubric.ValidateScores(request.Criteria); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "validation_error", err.Error())
 		return
+	}
+	// A judge's own draft is the most contended write in the portal: the same
+	// review is saved repeatedly as they work, from a laptop and a phone, and a
+	// stale tab silently overwriting a newer one loses scores with no error
+	// anywhere. The precondition is checked against the review as it stands.
+	if existing, err := s.store.ReviewForJudgeProject(principal.UserID, projectID); err == nil {
+		current := reviewVersion(existing)
+		if precondition := checkPrecondition(r, current); precondition != nil {
+			s.writePreconditionError(w, current, precondition)
+			return
+		}
 	}
 	// The assignment is the object-level half of the judging authorization, and
 	// it is checked here because only the handler holds the project. The
@@ -893,6 +922,7 @@ func (s *Server) saveReview(w http.ResponseWriter, r *http.Request) {
 		action = authz.ActionReviewSubmit
 		summary = "submitted a review"
 	}
+	setETag(w, reviewVersion(saved))
 	s.allowed(r, principal, action, saved.EventID, "review", saved.ID)
 	s.audit(r, principal.UserID, "judging."+grantEffect(saved.Submitted), "review", saved.ID, saved.EventID,
 		summary, map[string]any{

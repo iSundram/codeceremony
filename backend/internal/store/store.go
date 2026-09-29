@@ -57,6 +57,11 @@ type Store struct {
 	grants             map[string]authz.Grant
 
 	actionAudit actionAudit
+	// idempotency remembers the outcome of keyed writes so a retry cannot apply
+	// one twice. It is in-memory and rebuilt empty on restart, which is the safe
+	// direction: a forgotten key risks a duplicate, a wrongly persisted one would
+	// make a key mean different things before and after a restart.
+	idempotency idempotency
 
 	// restored records whether the current contents came from a snapshot rather
 	// than from a seed, which the readiness probe reports.
@@ -199,6 +204,7 @@ func New(data seed.Data) *Store {
 	// from a snapshot: restoring old entries would either break the chain or
 	// require persisting the signing key alongside the data it protects.
 	store.initActionAudit(data.AuditSecret)
+	store.initIdempotency()
 	return store
 }
 
