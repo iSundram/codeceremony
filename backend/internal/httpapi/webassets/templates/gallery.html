@@ -1,0 +1,60 @@
+{{define "content"}}
+<div class="panel-head">
+  <div>
+    <span class="overline">{{.Event.State}}</span>
+    <h1>{{.Event.Name}}</h1>
+    <p class="muted small">
+      {{.ProjectCount}} projects · {{.JudgeCount}} judges · {{len .Tracks}} tracks ·
+      submissions closed {{.Event.SubmissionsClose.Format "2 Jan 2006 15:04 MST"}}
+    </p>
+  </div>
+  <div style="text-align:right">
+    {{if .ResultsPublished}}
+      <span class="tag good">Results published</span>
+    {{else}}
+      <span class="tag warn">Results withheld</span>
+    {{end}}
+  </div>
+</div>
+
+<form class="filters" method="get" action="/events/{{.Event.Slug}}">
+  <div class="field">
+    <label for="q">Search projects</label>
+    <input type="text" id="q" name="q" value="{{.Query}}" placeholder="title, summary or team">
+  </div>
+  <div class="field">
+    <label for="track">Track</label>
+    <select id="track" name="track">
+      <option value="">All tracks</option>
+      {{range .Tracks}}<option value="{{.ID}}"{{if eq .ID $.TrackID}} selected{{end}}>{{.Name}}</option>{{end}}
+    </select>
+  </div>
+  <button class="button" type="submit">Filter</button>
+  {{if or .Query .TrackID}}<a class="button secondary" href="/events/{{.Event.Slug}}">Clear</a>{{end}}
+</form>
+
+{{if .Projects}}
+<div class="grid">
+  {{range .Projects}}{{template "galleryCard" .}}{{end}}
+</div>
+{{else}}
+<div class="panel"><p class="muted">No projects match that search.</p></div>
+{{end}}
+
+<div class="panel" style="margin-top:40px">
+  <div class="panel-head">
+    <h2>Tracks</h2>
+  </div>
+  <table class="table">
+    <thead><tr><th>Track</th><th class="num">Projects</th></tr></thead>
+    <tbody>
+      {{range .Tracks}}
+      <tr>
+        <td><a href="/events/{{$.Event.Slug}}?track={{.ID}}">{{.Name}}</a></td>
+        <td class="num">{{.Count}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}

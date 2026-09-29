@@ -1,0 +1,87 @@
+{{define "content"}}
+<span class="overline">Results</span>
+<h1>{{.Event.Name}}</h1>
+<p class="muted">Method <code>{{.Summary.Method}}</code> v{{.Summary.MethodVersion}} · {{.Summary.Confidence}}% bootstrap interval over {{.Summary.Resamples}} resamples of the panel.</p>
+
+<div class="notice">
+  <strong>Read the interval, not the rank.</strong>
+  Each bar is the {{.Summary.Confidence}}% interval for that project, obtained by resampling judges with replacement and re-running the whole pipeline. {{.SeparableCount}} of {{len .Summary.Projects}} projects are separated from the project ranked immediately above them.
+  <br><br>
+  Separation is a statement about <em>one adjacent pair</em>. It is not a clique: a chain of overlapping neighbours can still contain a project that is clearly ahead of the bottom of the table. The portal will not claim a project beat another where their intervals overlap, because on this data it does not know. The order is still deterministic and complete; what is missing is evidence for the differences.
+</div>
+
+<div class="panel">
+  <div class="panel-head">
+    <h2>Standings</h2>
+    <a class="button secondary" href="/v1/organizer/export.csv?event_id={{.Event.ID}}">CSV export</a>
+  </div>
+  <table class="table">
+    <thead>
+      <tr>
+        <th class="num">#</th><th>Project</th><th class="num">Normalized</th>
+        <th class="num">Raw</th><th class="num">Reviews</th><th>Interval</th><th>Separable</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Summary.Projects}}
+      <tr>
+        <td class="num">{{.Rank}}</td>
+        <td><a href="/projects/{{.ProjectID}}">{{index $.Titles .ProjectID}}</a> <span class="small muted">{{.ProjectID}}</span></td>
+        <td class="num">{{printf "%.1f" .NormalizedMean}}</td>
+        <td class="num">{{printf "%.2f" .RawMean}}</td>
+        <td class="num">{{.ReviewCount}}{{if .LowInformationReviews}} <span class="tag warn">{{.LowInformationReviews}} low</span>{{end}}</td>
+        <td>{{template "interval" .}}</td>
+        <td>{{if .Separable}}<span class="tag good">separated</span>{{else}}<span class="tag warn">not separated from rank {{.PreviousRank}}</span>{{end}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+
+<div class="panel">
+  <div class="panel-head"><h2>How each judge was weighted</h2></div>
+  <table class="table">
+    <thead><tr><th>Judge</th><th class="num">Reviews</th><th class="num">Reliability</th><th class="num">Mean</th><th class="num">Std dev</th><th>Notes</th></tr></thead>
+    <tbody>
+      {{range .Summary.Judges}}
+      <tr>
+        <td>{{.JudgeID}}{{if .LowInformation}} <span class="tag warn">low signal</span>{{end}}</td>
+        <td class="num">{{.Reviews}}</td>
+        <td class="num">{{.Reliability}}</td>
+        <td class="num">{{.MeanText}}</td>
+        <td class="num">{{.StdDevText}}</td>
+        <td class="small muted">{{range .Reasons}}{{.}} {{end}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  <p class="small muted" style="margin-top:12px">Reliability is the shrinkage factor <code>n / (n + k)</code> with <code>k = 2</code>. A judge with two reviews sits at 0.50 and contributes half their z-scores; a judge with eleven sits at 0.85.</p>
+</div>
+
+<div class="panel">
+  <div class="panel-head"><h2>Criteria as the panel used them</h2></div>
+  <table class="table">
+    <thead><tr><th>Criterion</th><th class="num">Min</th><th class="num">Max</th><th class="num">Mean</th><th class="num">Std dev</th><th class="num">Scores</th></tr></thead>
+    <tbody>
+      {{range $key, $stat := .Summary.CriterionStats}}
+      <tr>
+        <td>{{$key}}</td>
+        <td class="num">{{$stat.Min}}</td>
+        <td class="num">{{$stat.Max}}</td>
+        <td class="num">{{$stat.Mean}}</td>
+        <td class="num">{{$stat.StdDev}}</td>
+        <td class="num">{{$stat.Count}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+
+{{define "interval"}}
+{{$min := 0.0}}{{$max := 100.0}}
+<span class="meter" title="point {{printf "%.1f" .NormalizedMean}}, interval {{printf "%.1f" .Low}} to {{printf "%.1f" .High}}">
+  <span class="span" style="left:{{printf "%.2f" .Low}}%;width:{{printf "%.2f" (.IntervalWidth)}}%"></span>
+  <span class="point" style="left:{{printf "%.2f" .NormalizedMean}}%"></span>
+</span>
+{{end}}

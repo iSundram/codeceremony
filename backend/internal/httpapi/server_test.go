@@ -41,7 +41,36 @@ func newTestServer(t *testing.T) (*Server, *auth.Manager, *store.Store) {
 	return server, tokens, data
 }
 
-func tokenFor(t *testing.T, tokens *auth.Manager, data *store.Store, id string) string {
+// newTestServerWithSessions is the same fixture driven by the store-backed
+// session manager that production uses, rather than the stateless HMAC issuer.
+// Session revocation can only be asserted against the former.
+func newTestServerWithSessions(t *testing.T) (*Server, auth.TokenIssuer, *store.Store) {
+	t.Helper()
+	hash, err := auth.HashPassword(testPassword)
+	if err != nil {
+		t.Fatalf("HashPassword() error = %v", err)
+	}
+	cfg := testServerConfig()
+	data := store.New(seed.Default(hash))
+	tokens := auth.NewSessionManager(time.Hour, data)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	server := New(cfg, data, tokens, logger)
+	server.SetClock(func() time.Time { return time.Date(2026, time.March, 2, 12, 0, 0, 0, time.UTC) })
+	return server, tokens, data
+}
+
+func testServerConfig() config.Config {
+	return config.Config{
+		Environment:     "test",
+		HTTPAddr:        ":8080",
+		SessionSecret:   "test-secret",
+		AllowedOrigin:   "http://localhost:3000",
+		SeedDemoData:    true,
+		SessionTTLHours: 1,
+	}
+}
+
+func tokenFor(t *testing.T, tokens auth.TokenIssuer, data *store.Store, id string) string {
 	t.Helper()
 	user, err := data.UserByID(id)
 	if err != nil {

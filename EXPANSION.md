@@ -1,5 +1,9 @@
 # CodeCeremony — Next Expansion Roadmap
 
+> **Superseded.** This is the pre-implementation roadmap, kept as a record of the
+> planning. For what is actually built, read [`README.md`](README.md) and
+> [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
 > **Status:** Active backend-first expansion plan. Frontend implementation is intentionally deferred.
 >
 > **Product goal:** Move CodeCeremony from a working hackathon submission/judging backend to a self-hostable event operating system with a polished operator console, participant workspace, judge console, public gallery, and first-party My Account center.

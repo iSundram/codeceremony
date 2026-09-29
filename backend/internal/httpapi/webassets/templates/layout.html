@@ -1,0 +1,47 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · CodeCeremony</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="shell">
+  <header class="masthead">
+    <a class="wordmark" href="/">CodeCeremony <span>{{.EventName}}</span></a>
+    <nav class="nav">
+      {{if .EventSlug}}<a href="/events/{{.EventSlug}}"{{if eq .Nav "event"}} aria-current="page"{{end}}>Gallery</a>{{end}}
+      {{if .SignedIn}}
+        {{if .IsJudge}}<a href="/judge/{{.EventSlug}}"{{if eq .Nav "judge"}} aria-current="page"{{end}}>Judging</a>{{end}}
+        {{if .IsStaff}}<a href="/organizer/{{.EventSlug}}"{{if eq .Nav "organizer"}} aria-current="page"{{end}}>Organizer</a>{{end}}
+        <a href="/account">{{.User.DisplayName}}</a>
+        <form method="post" action="/logout" style="display:inline">
+          <button class="button secondary" type="submit">Sign out</button>
+        </form>
+      {{else}}
+        <a href="/login"{{if eq .Nav "login"}} aria-current="page"{{end}}>Sign in</a>
+      {{end}}
+    </nav>
+  </header>
+
+  {{if .Notice}}<div class="notice {{.NoticeKind}}">{{.Notice}}</div>{{end}}
+
+  <main>{{template "content" .Page}}</main>
+
+  <footer class="footer">
+    <span>CodeCeremony — a self-hostable hackathon submission and judging platform.</span>
+    <span><a href="/v1/openapi.json">API</a> · <a href="/v1/endpoints">endpoints</a> · <a href="/healthz">health</a></span>
+  </footer>
+</div>
+</body>
+</html>{{end}}
+
+{{define "galleryCard"}}
+<a class="project" href="/projects/{{.ID}}">
+  <span class="track">{{.TrackName}}</span>
+  <h3>{{.Title}}</h3>
+  <p>{{.Summary}}</p>
+  <span class="small muted mono">{{.TeamName}}</span>
+</a>
+{{end}}

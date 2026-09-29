@@ -65,19 +65,24 @@ func (s *Server) viewerContext(principal auth.Principal, eventID string) (bool, 
 	return false, principal.Role == domain.RoleJudge, false
 }
 
+// listEventStaff is public, because knowing who runs an event is public. The
+// addresses behind those names are not, so they are added only for staff.
 func (s *Server) listEventStaff(w http.ResponseWriter, r *http.Request) {
 	event, err := s.store.EventBySlug(r.PathValue("slug"))
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "hackathon not found")
 		return
 	}
+	staff := s.isStaff(r)
 	members := s.store.EventStaffMembers(event.ID)
 	views := make([]map[string]any, 0, len(members))
 	for _, member := range members {
 		view := map[string]any{"staff": member, "permissions": member.Role.Can(domain.PermissionManageEvent)}
 		if user, err := s.store.UserByID(member.UserID); err == nil {
 			view["display_name"] = user.DisplayName
-			view["email"] = user.Email
+			if staff {
+				view["email"] = user.Email
+			}
 		}
 		views = append(views, view)
 	}

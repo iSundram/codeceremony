@@ -408,19 +408,26 @@ func (s *Server) createHost(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"data": host})
 }
 
+// listJudges is the public panel. Who is judging an event is public
+// information, but a judge's email address is not, and neither is the global
+// reviewer pool that an organizer uses to staff future events. Those are added
+// only when the caller is staff.
 func (s *Server) listJudges(w http.ResponseWriter, r *http.Request) {
 	event, err := s.store.EventBySlug(r.PathValue("slug"))
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "hackathon not found")
 		return
 	}
+	staff := s.isStaff(r)
 	roster := s.store.JudgeRoster(event.ID)
 	views := make([]map[string]any, 0, len(roster))
 	for _, entry := range roster {
 		view := map[string]any{"entry": entry}
 		if user, err := s.store.UserByID(entry.JudgeID); err == nil {
 			view["display_name"] = user.DisplayName
-			view["email"] = user.Email
+			if staff {
+				view["email"] = user.Email
+			}
 		}
 		if profile, err := s.store.JudgeProfile(entry.JudgeID); err == nil {
 			view["capacity"] = profile.Capacity
@@ -429,7 +436,13 @@ func (s *Server) listJudges(w http.ResponseWriter, r *http.Request) {
 		}
 		views = append(views, view)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": views, "count": len(views), "global": s.store.GlobalJudges()})
+	payload := map[string]any{"data": views, "count": len(views)}
+	if staff {
+		payload["global"] = s.store.GlobalJudges()
+	} else {
+		payload["global_withheld"] = "sign in as an organizer to see the reviewer pool"
+	}
+	writeJSON(w, http.StatusOK, payload)
 }
 
 func (s *Server) addJudge(w http.ResponseWriter, r *http.Request) {
@@ -602,15 +615,7 @@ func (s *Server) publishResults(w http.ResponseWriter, r *http.Request) {
 			pending++
 		}
 	}
-	publishedAt := s.now().UTC()
-	updated, err := s.store.UpdateEvent(event.ID, func(current domain.Event) (domain.Event, error) {
-		next := current
-		next.ResultsPublished = true
-		next.ResultsPublishedAt = &publishedAt
-		next.State = domain.HackathonResultsPublished
-		next.LeaderboardPublic = request.Public
-		return next, nil
-	})
+	updated, err := s.store.SetResultsPublished(event.ID, true, request.Public, s.now())
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "hackathon not found")
 		return
@@ -656,14 +661,7 @@ func (s *Server) unpublishResults(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "validation_error", "a reason is required to unpublish results")
 		return
 	}
-	updated, err := s.store.UpdateEvent(event.ID, func(current domain.Event) (domain.Event, error) {
-		next := current
-		next.ResultsPublished = false
-		next.ResultsPublishedAt = nil
-		next.LeaderboardPublic = false
-		next.State = domain.HackathonJudging
-		return next, nil
-	})
+	updated, err := s.store.SetResultsPublished(event.ID, false, false, s.now())
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "hackathon not found")
 		return

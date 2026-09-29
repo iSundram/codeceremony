@@ -1,6 +1,8 @@
 package store
 
 import (
+	"errors"
+	"fmt"
 	"regexp"
 	"sort"
 	"strconv"
@@ -51,6 +53,10 @@ type Store struct {
 	sessions           map[string]domain.Session
 	notifications      map[string]domain.Notification
 	auditEvents        map[string]domain.AuditEvent
+
+	// restored records whether the current contents came from a snapshot rather
+	// than from a seed, which the readiness probe reports.
+	restored bool
 }
 
 func New(data seed.Data) *Store {
@@ -86,7 +92,7 @@ func New(data seed.Data) *Store {
 		memberships:        make(map[string]domain.TeamMembership, len(data.TeamMemberships)),
 		submissions:        make(map[string]domain.Submission, len(data.Submissions)),
 		submissionVersions: make(map[string]domain.SubmissionVersion),
-		duplicates:         make(map[string]domain.DuplicateFlag),
+		duplicates:         make(map[string]domain.DuplicateFlag, len(data.Duplicates)),
 		assignments:        make(map[string]domain.Assignment, len(data.Assignments)),
 		reviews:            make(map[string]domain.Review, len(data.Reviews)),
 		sessions:           make(map[string]domain.Session),
@@ -165,6 +171,9 @@ func New(data seed.Data) *Store {
 	}
 	for _, submission := range data.Submissions {
 		store.submissions[submission.ID] = submission
+	}
+	for _, duplicate := range data.Duplicates {
+		store.duplicates[duplicate.ID] = duplicate
 	}
 	for _, assignment := range data.Assignments {
 		store.assignments[assignment.ID] = assignment
@@ -1130,6 +1139,15 @@ func (s *Store) SaveReview(review domain.Review) (domain.Review, error) {
 	if !exists {
 		return domain.Review{}, domain.ErrNotFound
 	}
+	// A review must belong to the event its project belongs to. Without this
+	// check a caller can stamp any event id onto a review, and because every
+	// read of reviews filters on the event id, the row then disappears from the
+	// leaderboard of the event it actually belongs to and appears in the
+	// results of an event it has nothing to do with.
+	if project.EventID != review.EventID {
+		return domain.Review{}, fmt.Errorf("%w: project %s belongs to event %s, not %s",
+			domain.ErrValidation, review.ProjectID, project.EventID, review.EventID)
+	}
 	if existing, exists := s.reviews[reviewKey(review.JudgeID, review.ProjectID)]; exists {
 		review.ID = existing.ID
 		if existing.Submitted && !review.Submitted {
@@ -1838,4 +1856,65 @@ func (s *Store) UpdateEvent(id string, update func(domain.Event) (domain.Event, 
 	updated.UpdatedAt = time.Now().UTC()
 	s.events[id] = updated
 	return updated, nil
+}
+
+// Snapshot errors. These are returned rather than silently coerced, because a
+// data directory that cannot be read is an operator problem and silently
+// starting empty would look like data loss.
+var (
+	// ErrSnapshotVersion means the data file was written by a different
+	// version of the portal.
+	ErrSnapshotVersion = errors.New("store: unsupported snapshot version")
+	// ErrSnapshotContainsSecrets means a data file carries a password hash,
+	// which Snapshot never writes. Refusing it stops a hand-edited or
+	// tampered file from smuggling a credential into a restored account.
+	ErrSnapshotContainsSecrets = errors.New("store: snapshot contains a password hash")
+)
+
+// ReviewsForProject returns every review for a project, across all judges. It
+// is the count a public project page shows; it deliberately exposes no scores,
+// and the public routes that use it never call it for a project whose results
+// are still withheld.
+func (s *Store) ReviewsForProject(projectID string) []domain.Review {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]domain.Review, 0)
+	for _, review := range s.reviews {
+		if review.ProjectID == projectID {
+			result = append(result, cloneReview(review))
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].ProjectID != result[j].ProjectID {
+			return result[i].ProjectID < result[j].ProjectID
+		}
+		return result[i].JudgeID < result[j].JudgeID
+	})
+	return result
+}
+
+// SetResultsPublished publishes or withdraws an event's results.
+//
+// The lifecycle transition lives here rather than in a handler because two
+// surfaces can publish (the JSON route and the organizer console) and the
+// invariant that matters is that publishing also moves the event into its
+// results_published state. Two copies of that rule would drift.
+func (s *Store) SetResultsPublished(eventID string, published bool, public bool, at time.Time) (domain.Event, error) {
+	return s.UpdateEvent(eventID, func(current domain.Event) (domain.Event, error) {
+		next := current
+		next.LeaderboardPublic = public
+		if !published {
+			next.ResultsPublished = false
+			next.ResultsPublishedAt = nil
+			if next.State == domain.HackathonResultsPublished {
+				next.State = domain.HackathonJudging
+			}
+			return next, nil
+		}
+		next.ResultsPublished = true
+		stamp := at.UTC()
+		next.ResultsPublishedAt = &stamp
+		next.State = domain.HackathonResultsPublished
+		return next, nil
+	})
 }

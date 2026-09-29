@@ -1,4 +1,8 @@
 # CodeCeremony — Comprehensive Product Feature Specification
+> **Superseded.** This is the pre-implementation feature specification, kept as a
+> record of what was planned. For what is actually built and what is honestly
+> missing, read [`README.md`](README.md), which lists the real tier claims and the
+> known limitations.
 
 > **Status:** Feature decisions locked; implementation is in progress using the P0–P2 order below.
 >

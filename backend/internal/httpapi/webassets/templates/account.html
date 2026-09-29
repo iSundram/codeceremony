@@ -1,0 +1,16 @@
+{{define "content"}}
+<h1>{{.User.DisplayName}}</h1>
+<p class="muted">{{.User.Email}}</p>
+
+<div class="stat-row" style="margin:24px 0">
+  <div class="stat"><div class="overline">Role</div><div class="value" style="font-size:20px">{{.User.Role}}</div></div>
+  <div class="stat"><div class="overline">State</div><div class="value" style="font-size:20px">{{.User.State}}</div></div>
+  <div class="stat"><div class="overline">Sessions</div><div class="value">{{.SessionCount}}</div></div>
+</div>
+
+<div class="panel">
+  <div class="panel-head"><h2>Your account</h2></div>
+  <p class="small muted">Sessions are held in memory and are not persisted, so a restart of the portal signs everyone out. The fixed seeded tokens are re-minted at every boot so that automation which attaches a documented header keeps working.</p>
+  <p class="small muted" style="margin-top:12px">Everything the API exposes about your account is also available under <code>/v1/account</code>, and the session list can be revoked there.</p>
+</div>
+{{end}}

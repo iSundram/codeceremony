@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -13,6 +14,7 @@ type Config struct {
 	SessionSecret   string
 	AllowedOrigin   string
 	SeedDemoData    bool
+	SeedPassword    string
 	SessionTTLHours int
 	SMTPHost        string
 	SMTPPort        int
@@ -25,7 +27,12 @@ type Config struct {
 	MailInterval    int
 	MailBatchSize   int
 	MailMaxAttempts int
+	DataDir         string
+	FixturesPath    string
+	PersistInterval time.Duration
 }
+
+const defaultSeedPassword = "codeceremony-dev"
 
 func Load() (Config, error) {
 	cfg := Config{
@@ -34,6 +41,10 @@ func Load() (Config, error) {
 		SessionSecret:   envOr("SESSION_SECRET", "codeceremony-local-development-secret-change-me"),
 		AllowedOrigin:   envOr("ALLOWED_ORIGIN", "http://localhost:3000"),
 		SessionTTLHours: 12,
+		SeedPassword:    envOr("SEED_PASSWORD", defaultSeedPassword),
+		DataDir:         envOr("DATA_DIR", "./data"),
+		FixturesPath:    strings.TrimSpace(os.Getenv("FIXTURES_PATH")),
+		PersistInterval: 2 * time.Second,
 		SMTPHost:        strings.TrimSpace(os.Getenv("SMTP_HOST")),
 		SMTPPort:        587,
 		SMTPUsername:    strings.TrimSpace(os.Getenv("SMTP_USERNAME")),
@@ -71,6 +82,13 @@ func Load() (Config, error) {
 		}
 		cfg.SMTPPort = value
 	}
+	if raw := strings.TrimSpace(os.Getenv("PERSIST_INTERVAL_SECONDS")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 {
+			return Config{}, fmt.Errorf("PERSIST_INTERVAL_SECONDS must be a positive integer")
+		}
+		cfg.PersistInterval = time.Duration(value) * time.Second
+	}
 	if raw := strings.TrimSpace(os.Getenv("MAIL_INTERVAL_SECONDS")); raw != "" {
 		value, err := strconv.Atoi(raw)
 		if err != nil || value < 1 {
@@ -104,6 +122,18 @@ func Load() (Config, error) {
 	}
 	if cfg.Environment == "production" && cfg.SessionSecret == "codeceremony-local-development-secret-change-me" {
 		return Config{}, fmt.Errorf("SESSION_SECRET must be changed in production")
+	}
+	// Seeding mints fixed, publicly documented session tokens for accounts that
+	// hold organizer and admin rights, and hashes one shared password. That is
+	// correct for a self-hosted demo and indefensible in production, so opting
+	// in there requires replacing the shared password as well.
+	if cfg.IsProduction() && cfg.SeedDemoData {
+		if cfg.SeedPassword == defaultSeedPassword {
+			return Config{}, fmt.Errorf("SEED_PASSWORD must be set to a private value before SEED_DEMO_DATA can be enabled in production")
+		}
+		if len(cfg.SeedPassword) < 12 {
+			return Config{}, fmt.Errorf("SEED_PASSWORD must be at least 12 characters")
+		}
 	}
 	if cfg.AllowedOrigin == "" {
 		cfg.AllowedOrigin = "http://localhost:3000"

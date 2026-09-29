@@ -1,0 +1,93 @@
+{{define "content"}}
+<div class="panel-head">
+  <div>
+    <span class="overline">Organizer</span>
+    <h1>{{.Event.Name}}</h1>
+    <p class="muted small">{{.Event.State}} · {{.ProjectCount}} projects · submissions closed {{.Event.SubmissionsClose.Format "2 Jan 2006"}}</p>
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <a class="button secondary" href="/organizer/{{.Event.Slug}}/results">Results</a>
+    <a class="button secondary" href="/v1/organizer/export.csv?event_id={{.Event.ID}}">CSV export</a>
+  </div>
+</div>
+
+<div class="stat-row">
+  <div class="stat"><div class="overline">Submissions</div><div class="value">{{.Progress.Submissions}}</div></div>
+  <div class="stat"><div class="overline">Eligible</div><div class="value">{{.Progress.EligibleSubmissions}}</div></div>
+  <div class="stat"><div class="overline">Assignments</div><div class="value">{{.Progress.Assignments}}</div></div>
+  <div class="stat"><div class="overline">Reviews done</div><div class="value">{{.Progress.ReviewsCompleted}}</div></div>
+  <div class="stat"><div class="overline">Outstanding</div><div class="value">{{.Progress.ReviewsPending}}</div></div>
+  <div class="stat"><div class="overline">Duplicates</div><div class="value">{{len .Duplicates}}</div></div>
+</div>
+
+<div class="panel" style="margin-top:24px">
+  <div class="panel-head">
+    <h2>Results</h2>
+    <a class="button secondary" href="/organizer/{{.Event.Slug}}/results">Full breakdown</a>
+  </div>
+  <p class="small muted">Results are withheld from the public until you publish them. The acceptance checker posts a submission against this event and is refused, because the fixture deadline is in the past.</p>
+  <div style="margin-top:16px;display:flex;gap:12px;flex-wrap:wrap">
+    {{if .ResultsPublished}}
+      <form method="post" action="/organizer/{{.Event.Slug}}/publish"><input type="hidden" name="action" value="unpublish"><button class="button secondary" type="submit">Unpublish results</button></form>
+    {{else}}
+      <form method="post" action="/organizer/{{.Event.Slug}}/publish"><input type="hidden" name="action" value="publish"><button class="button" type="submit">Publish results</button></form>
+    {{end}}
+  </div>
+  <p class="small muted" style="margin-top:12px">Status: {{if .ResultsPublished}}<span class="tag good">published</span>{{else}}<span class="tag warn">withheld</span>{{end}}</p>
+</div>
+
+{{if .LowInformation}}
+<div class="panel">
+  <div class="panel-head"><h2>Judges with little signal</h2></div>
+  <table class="table">
+    <thead><tr><th>Judge</th><th class="num">Reviews</th><th class="num">Reliability</th><th>Why</th></tr></thead>
+    <tbody>
+      {{range .LowInformation}}
+      <tr>
+        <td>{{.JudgeID}}</td>
+        <td class="num">{{.Reviews}}</td>
+        <td class="num">{{.Reliability}}</td>
+        <td class="small muted">{{range .Reasons}}{{.}}{{end}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  <p class="small muted" style="margin-top:12px">These judges are counted, not discarded. Their reviews are shrunk towards neutral so a thin or flat set of scores cannot dominate the panel.</p>
+</div>
+{{end}}
+
+{{if .Duplicates}}
+<div class="panel">
+  <div class="panel-head"><h2>Duplicate submissions</h2></div>
+  <table class="table">
+    <thead><tr><th>Project</th><th>Duplicate of</th><th>Signal</th><th>Status</th></tr></thead>
+    <tbody>
+      {{range .Duplicates}}
+      <tr>
+        <td><a href="/projects/{{.ProjectID}}">{{.ProjectID}}</a></td>
+        <td class="mono">{{.DuplicateOfProjectID}}</td>
+        <td class="small muted">{{.Detail}}</td>
+        <td>{{.Status}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+
+<div class="panel">
+  <div class="panel-head"><h2>Panel</h2></div>
+  <table class="table">
+    <thead><tr><th>Judge</th><th class="num">Reviews</th><th>Tracks</th></tr></thead>
+    <tbody>
+      {{range .Panel}}
+      <tr>
+        <td>{{.DisplayName}}{{if .LowInformation}} <span class="tag warn">low signal</span>{{end}}</td>
+        <td class="num">{{.Reviews}}</td>
+        <td class="small muted">{{.Tracks}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}

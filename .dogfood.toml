@@ -1,0 +1,45 @@
+# .dogfood.toml
+# Where the DOGFOOD acceptance checker should look in this portal.
+#   python3 run.py .dogfood.toml > acceptance-report.txt
+#
+# The auth values below are the fixed seeded session tokens. They are generated
+# from internal/seed/identities.go and printed on every boot, so this file, the
+# seed and the boot banner cannot drift apart. They authenticate a demo portal
+# seeded with invented data; they are not production credentials, and the
+# portal refuses to enable seeding in production without a private password.
+
+[portal]
+base_url = "http://localhost:8080"
+
+[tiers]
+claimed = ["T1", "T2", "T3"]
+pitch = "A self-hostable hackathon judging portal: role isolation enforced in the backend, and a cross-judge normalization that documents its own uncertainty and refuses to separate projects the panel data does not separate."
+
+[auth]
+admin            = "Cookie: session=cc_adm_3c5e7a9b1d0f2e46"
+judge_a          = "Cookie: session=cc_jdg_a_91bc4d2e7a35f08"
+judge_b          = "Cookie: session=cc_jdg_b_44de8f1c6b92a07"
+organizer        = "Cookie: session=cc_org_7f2a1b9d4e6c8a0f"
+participant      = "Cookie: session=cc_prt_2e88a4d6c0b91f37"
+participant_other = "Cookie: session=cc_prt_7b1c3f95d2e60a84"
+
+[routes]
+# The public gallery of the fixture event, rendered as HTML. It is the same data
+# the JSON route serves, with search (?q=) and track filter (?track=) working.
+# The JSON equivalent is /v1/events/sample-hack-2026/projects.
+gallery      = "/events/sample-hack-2026"
+
+# Submissions for the same event. The fixture event's submissions_close is in
+# the past, so a seeded portal is already closed and this is refused.
+submit       = "/v1/events/sample-hack-2026/submissions"
+
+# A judge's own scores. Scoped to the caller by the session, never by a
+# parameter: the handler reads the judge from the verified session.
+judge_scores = "/v1/judge/scores?event_id=evt_01"
+
+# The same route asking for judge_a's scores by name. judge_a is the seeded
+# identity bound to fixture judge jdg_24, so this is the url that would return
+# jdg_24's scores. Sent as judge_b it is refused with 403.
+peer_scores  = "/v1/judge/scores?event_id=evt_01&judge=jdg_24"
+
+csv_export   = "/v1/organizer/export.csv?event_id=evt_01"

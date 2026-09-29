@@ -1,0 +1,59 @@
+{{define "content"}}
+<h1>Your judging batch</h1>
+<p class="muted">Only your own assignments and your own scores are shown here. No route in this portal will return another judge's review, which is enforced in the backend rather than hidden in this page.</p>
+
+<div class="stat-row" style="margin:24px 0">
+  <div class="stat"><div class="overline">Assigned</div><div class="value">{{.Total}}</div></div>
+  <div class="stat"><div class="overline">Submitted</div><div class="value">{{.Done}}</div></div>
+  <div class="stat"><div class="overline">Outstanding</div><div class="value">{{.Pending}}</div></div>
+  {{if .LowInformation}}
+  <div class="stat"><div class="overline">Calibration</div><div class="value" style="font-size:20px">low information</div></div>
+  {{end}}
+</div>
+
+{{if .LowInformation}}
+<div class="notice">
+  <strong>Your scores carry little signal.</strong>
+  Every project you have reviewed received the same score, or you have reviewed too few projects to establish your own scale. Your reviews are recorded and counted, but the normalizer shrinks their weight towards neutral rather than treating them as a confident opinion. The reasoning is documented in <code>JUDGING.md</code>.
+</div>
+{{end}}
+
+<div class="panel">
+  <div class="panel-head"><h2>Assignments</h2></div>
+  <table class="table">
+    <thead><tr><th>Project</th><th>Track</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+      {{range .Assignments}}
+      <tr>
+        <td><a href="/projects/{{.ProjectID}}">{{.ProjectTitle}}</a></td>
+        <td>{{.TrackName}}</td>
+        <td>{{if .ReviewSubmitted}}<span class="tag good">submitted</span>{{else}}<span class="tag warn">outstanding</span>{{end}}</td>
+        <td><a href="/projects/{{.ProjectID}}">{{if .ReviewSubmitted}}View{{else}}Score{{end}}</a></td>
+      </tr>
+      {{else}}
+      <tr><td colspan="4" class="muted">You have no assignments yet.</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+
+<div class="panel">
+  <div class="panel-head"><h2>Your submitted scores</h2></div>
+  <table class="table">
+    <thead><tr><th>Project</th><th class="num">Raw</th><th class="num">Normalized</th><th class="num">Reviews</th></tr></thead>
+    <tbody>
+      {{range .Reviews}}
+      <tr>
+        <td><a href="/projects/{{.ProjectID}}">{{.ProjectTitle}}</a></td>
+        <td class="num">{{printf "%.1f" .RawScore}}</td>
+        <td class="num">{{printf "%.1f" .NormalizedScore}}</td>
+        <td class="num">{{.ProjectReviewCount}}</td>
+      </tr>
+      {{else}}
+      <tr><td colspan="4" class="muted">No submitted reviews yet.</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+  <p class="small muted" style="margin-top:12px">Your normalized score is your own review rescaled against your own average, then squashed to 0–100. It is not your rank, and other judges do not see it.</p>
+</div>
+{{end}}

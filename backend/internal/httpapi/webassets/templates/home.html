@@ -1,0 +1,22 @@
+{{define "content"}}
+<h1>{{.Heading}}</h1>
+<p class="body-large muted">{{.Lede}}</p>
+
+<div class="grid" style="margin-top:32px">
+  {{range .Events}}
+  <a class="project" href="/events/{{.Slug}}">
+    <span class="track">{{.State}}</span>
+    <h3>{{.Name}}</h3>
+    <p>{{.ProjectCount}} projects · {{.JudgeCount}} judges · closes {{.Closes}}</p>
+  </a>
+  {{end}}
+</div>
+
+<div class="panel" style="margin-top:40px">
+  <div class="panel-head">
+    <h2>How to try it</h2>
+  </div>
+  <p class="small muted">The portal is seeded with the shared DOGFOOD fixtures, so every entrant's portal is looking at the same invented hackathon. Sign in as one of the seeded identities to see the judging side.</p>
+  <p class="small muted mono">diego.herrera@example.org · iva.petrova@example.org · organizer@example.org · participant@example.org</p>
+</div>
+{{end}}

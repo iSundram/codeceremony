@@ -30,6 +30,7 @@ type Data struct {
 	Teams           []domain.Team
 	TeamMemberships []domain.TeamMembership
 	Submissions     []domain.Submission
+	Duplicates      []domain.DuplicateFlag
 	Assignments     []domain.Assignment
 	Reviews         []domain.Review
 	Rubrics         []domain.Rubric

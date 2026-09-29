@@ -148,3 +148,34 @@ func SortRubrics(rubrics []Rubric) {
 		return rubrics[i].TrackID < rubrics[j].TrackID
 	})
 }
+
+// MinScale is the lowest score any criterion accepts, and MaxScale the highest.
+//
+// The rubric does not store a global scale: each criterion carries its own
+// range, and a rubric with mixed ranges is legitimate. These helpers report the
+// widest range the rubric permits so a renderer can size a control once.
+func (r Rubric) MinScale() int {
+	if len(r.Criteria) == 0 {
+		return 1
+	}
+	lowest := r.Criteria[0].MinScore
+	for _, criterion := range r.Criteria {
+		if criterion.MinScore < lowest {
+			lowest = criterion.MinScore
+		}
+	}
+	return lowest
+}
+
+func (r Rubric) MaxScale() int {
+	if len(r.Criteria) == 0 {
+		return 5
+	}
+	highest := r.Criteria[0].MaxScore
+	for _, criterion := range r.Criteria {
+		if criterion.MaxScore > highest {
+			highest = criterion.MaxScore
+		}
+	}
+	return highest
+}

@@ -231,8 +231,13 @@ func TestJudgeRosterLifecycle(t *testing.T) {
 	if !containsProjectTitle(listed.Body.String(), "Infrastructure") {
 		t.Fatalf("expected roster entry with headline: %s", listed.Body.String())
 	}
-	if !containsProjectTitle(listed.Body.String(), "judge-a@example.org") {
-		t.Fatalf("expected roster to include judge email for organizers: %s", listed.Body.String())
+	// Who is on the panel is public; the addresses behind those names are not.
+	if containsProjectTitle(listed.Body.String(), "judge-a@example.org") {
+		t.Fatalf("anonymous caller was shown a judge email: %s", listed.Body.String())
+	}
+	asOrganizer := request(t, server, http.MethodGet, "/v1/events/sample-hack-2026/judges", organizer, nil)
+	if !containsProjectTitle(asOrganizer.Body.String(), "judge-a@example.org") {
+		t.Fatalf("organizer should see the judge email: %s", asOrganizer.Body.String())
 	}
 
 	notAJudge := request(t, server, http.MethodPost, "/v1/events/sample-hack-2026/judges", organizer, map[string]any{"judge_id": "participant"})
@@ -244,7 +249,7 @@ func TestJudgeRosterLifecycle(t *testing.T) {
 	if removed.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200, body = %s", removed.Code, removed.Body.String())
 	}
-	afterRemoval := request(t, server, http.MethodGet, "/v1/events/sample-hack-2026/judges", "", nil)
+	afterRemoval := request(t, server, http.MethodGet, "/v1/events/sample-hack-2026/judges", organizer, nil)
 	if containsProjectTitle(afterRemoval.Body.String(), "judge-a@example.org") {
 		t.Fatalf("expected the removed judge to leave the roster: %s", afterRemoval.Body.String())
 	}

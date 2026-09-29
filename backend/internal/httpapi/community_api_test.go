@@ -481,9 +481,19 @@ func TestWebhookCreationValidationAndDelivery(t *testing.T) {
 		t.Fatalf("the signing secret must never be returned: %s", created.Body.String())
 	}
 
-	listed := request(t, server, http.MethodGet, "/v1/events/sample-hack-2026/webhooks", "", nil)
+	// Webhook destination URLs and delivery counts describe the organizer's
+	// infrastructure, so the list is not public. An anonymous caller is
+	// refused rather than shown a redacted view.
+	anonymous := request(t, server, http.MethodGet, "/v1/events/sample-hack-2026/webhooks", "", nil)
+	if anonymous.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 for an anonymous webhook listing, body = %s", anonymous.Code, anonymous.Body.String())
+	}
+	listed := request(t, server, http.MethodGet, "/v1/events/sample-hack-2026/webhooks", organizer, nil)
+	if listed.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body = %s", listed.Code, listed.Body.String())
+	}
 	if !containsProjectTitle(listed.Body.String(), "secret_set") {
-		t.Fatalf("expected the public webhook view: %s", listed.Body.String())
+		t.Fatalf("expected the organizer webhook view: %s", listed.Body.String())
 	}
 	if !containsProjectTitle(listed.Body.String(), "results.published") {
 		t.Fatalf("expected the subscribed event list: %s", listed.Body.String())

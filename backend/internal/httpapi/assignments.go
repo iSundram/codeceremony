@@ -20,13 +20,21 @@ type assignmentView struct {
 	ReviewSubmitted  bool   `json:"review_submitted"`
 }
 
-func (s *Server) assignmentViews(eventID, judgeID string) []assignmentView {
+// assignmentViews renders assignments for a judge.
+//
+// includePeerEmails is what separates an organizer's view from a judge's. A
+// judge asking this route for a peer must not learn that peer's address or
+// whether that peer has finished reviewing, so the caller narrows the judge id
+// to the caller and suppresses peer email. The permission this route checks is
+// shared with judges on purpose, because judges need to see their own batch, so
+// the narrowing has to happen here rather than in the route table.
+func (s *Server) assignmentViews(eventID, judgeID string, includePeerEmails bool) []assignmentView {
 	views := make([]assignmentView, 0)
 	for _, assignment := range s.store.ListAssignments(eventID, judgeID) {
 		view := assignmentView{Assignment: assignment}
 		if judge, err := s.store.UserByID(assignment.JudgeID); err == nil {
 			view.JudgeDisplayName = judge.DisplayName
-			if assignment.JudgeID != judgeID {
+			if includePeerEmails && assignment.JudgeID != judgeID {
 				view.JudgeEmail = judge.Email
 			}
 		}
@@ -43,6 +51,11 @@ func (s *Server) assignmentViews(eventID, judgeID string) []assignmentView {
 }
 
 func (s *Server) organizerAssignments(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.PrincipalFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "authentication is required")
+		return
+	}
 	eventID := r.URL.Query().Get("event_id")
 	if eventID == "" {
 		eventID = "evt_01"
@@ -51,7 +64,19 @@ func (s *Server) organizerAssignments(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "event not found")
 		return
 	}
-	views := s.assignmentViews(eventID, r.URL.Query().Get("judge_id"))
+	staff := s.isStaff(r)
+	requested := strings.TrimSpace(r.URL.Query().Get("judge_id"))
+	if !staff {
+		// A judge may only ever read their own batch on this route. Naming
+		// another judge is refused outright rather than silently ignored, so the
+		// caller learns the request was wrong instead of believing it succeeded.
+		if requested != "" && requested != principal.UserID {
+			writeError(w, http.StatusForbidden, "forbidden", "judges cannot read another judge's assignments")
+			return
+		}
+		requested = principal.UserID
+	}
+	views := s.assignmentViews(eventID, requested, staff)
 	active := make([]assignmentView, 0, len(views))
 	for _, view := range views {
 		if view.RevokedAt == nil {
@@ -75,7 +100,7 @@ func (s *Server) judgeAssignments(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "event not found")
 		return
 	}
-	views := s.assignmentViews(eventID, principal.UserID)
+	views := s.assignmentViews(eventID, principal.UserID, false)
 	pending := 0
 	active := make([]assignmentView, 0, len(views))
 	for _, view := range views {

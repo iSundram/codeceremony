@@ -1,4 +1,8 @@
 # CodeCeremony — Account, Access, Team, and Notification Specification
+> **Partly superseded.** This is the account and roles design, kept as a record.
+> For the enforcement that actually exists, read
+> [`ARCHITECTURE.md`](ARCHITECTURE.md) section 5 and
+> [`THREAT-MODEL.md`](THREAT-MODEL.md).
 
 > **Status:** Comprehensive product and security decisions.
 >

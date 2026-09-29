@@ -3,16 +3,19 @@ package httpapi
 import (
 	"errors"
 	"fmt"
+	"html/template"
 	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/iSundram/codeceremony/backend/internal/auth"
 	"github.com/iSundram/codeceremony/backend/internal/config"
 	"github.com/iSundram/codeceremony/backend/internal/domain"
 	"github.com/iSundram/codeceremony/backend/internal/mailer"
+	"github.com/iSundram/codeceremony/backend/internal/ratelimit"
 	"github.com/iSundram/codeceremony/backend/internal/store"
 )
 
@@ -69,9 +72,14 @@ type Server struct {
 	tokens      auth.TokenIssuer
 	mailService *mailer.Service
 	webhooks    *mailer.Webhooks
-	routes      []RouteEntry
-	now         func() time.Time
-	logger      *slog.Logger
+	limiter     *ratelimit.Limiter
+
+	// pagesMu guards the lazily compiled per-page template cache.
+	pagesMu sync.Mutex
+	pages   map[string]*template.Template
+	routes  []RouteEntry
+	now     func() time.Time
+	logger  *slog.Logger
 }
 
 func New(cfg config.Config, data *store.Store, tokens auth.TokenIssuer, logger *slog.Logger) *Server {
@@ -96,6 +104,8 @@ func New(cfg config.Config, data *store.Store, tokens auth.TokenIssuer, logger *
 		webhooks:    mailer.NewWebhooks(data, mailer.NewHTTPHookTransport(), logger, cfg.MailMaxAttempts, time.Duration(cfg.MailInterval)*time.Second),
 		now:         time.Now,
 		logger:      logger,
+		limiter:     ratelimit.New(),
+		pages:       make(map[string]*template.Template),
 	}
 }
 
@@ -118,8 +128,8 @@ func (s *Server) Handler() http.Handler {
 	mux := newRouteMux()
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("GET /readyz", s.ready)
-	mux.HandleFunc("POST /v1/auth/login", s.login)
-	mux.HandleFunc("POST /v1/auth/logout", s.logout)
+	mux.Handle("POST /v1/auth/login", s.guard(ratelimit.Login, http.HandlerFunc(s.login)))
+	mux.Handle("POST /v1/auth/logout", s.guard(ratelimit.Account, http.HandlerFunc(s.logout)))
 	mux.HandleFunc("GET /v1/auth/methods", s.authMethods)
 	mux.Handle("GET /v1/me", s.requirePermission("", s.me))
 	mux.Handle("GET /v1/account/profile", s.requirePermission(domain.PermissionManageSelf, s.profile))
@@ -143,13 +153,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/permissions", s.permissionMatrix)
 	mux.Handle("GET /v1/activity", s.requirePermission("", s.activityFeed))
 	mux.Handle("GET /v1/events/{slug}/activity", s.optionalAuth(s.activityFeed))
-	mux.HandleFunc("GET /v1/events/{slug}/staff", s.listEventStaff)
+	mux.Handle("GET /v1/events/{slug}/staff", s.optionalAuth(s.listEventStaff))
 	mux.Handle("POST /v1/events/{slug}/staff", s.requirePermission(domain.PermissionManageRoles, s.addEventStaff))
 	mux.Handle("DELETE /v1/events/{slug}/staff/{userID}", s.requirePermission(domain.PermissionManageRoles, s.removeEventStaff))
 	mux.Handle("GET /v1/email/preferences", s.requirePermission(domain.PermissionViewOwnNotifications, s.mailPreferences))
 	mux.Handle("PATCH /v1/email/preferences", s.requirePermission(domain.PermissionManageSelf, s.updateMailPreferences))
-	mux.Handle("POST /v1/email/verify", s.requirePermission(domain.PermissionManageSelf, s.requestVerificationMail))
-	mux.Handle("POST /v1/email/password-reset", s.requirePermission(domain.PermissionManageSelf, s.requestPasswordResetMail))
+	mux.Handle("POST /v1/email/verify", s.guard(ratelimit.Account, s.requirePermission(domain.PermissionManageSelf, s.requestVerificationMail)))
+	mux.Handle("POST /v1/email/password-reset", s.guard(ratelimit.Account, s.requirePermission(domain.PermissionManageSelf, s.requestPasswordResetMail)))
 	mux.HandleFunc("GET /v1/unsubscribe/{token}", s.unsubscribe)
 	mux.HandleFunc("GET /v1/unsubscribe", s.unsubscribe)
 	mux.Handle("POST /v1/organizer/events/{slug}/announcements", s.requirePermission(domain.PermissionManageEvent, s.sendAnnouncement))
@@ -170,25 +180,26 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("PUT /v1/organizer/questions/{questionID}", s.requirePermission(domain.PermissionManageEvent, s.updateQuestion))
 	mux.Handle("DELETE /v1/organizer/questions/{questionID}", s.requirePermission(domain.PermissionManageEvent, s.deleteQuestion))
 	mux.Handle("GET /v1/events/{slug}/comments", s.optionalAuth(func(w http.ResponseWriter, r *http.Request) { s.listComments(w, r) }))
-	mux.Handle("POST /v1/events/{slug}/projects/{projectID}/comments", s.requirePermission("", s.postComment))
+	mux.Handle("POST /v1/events/{slug}/projects/{projectID}/comments", s.guard(ratelimit.Comment, s.requirePermission("", s.postComment)))
 	mux.Handle("DELETE /v1/comments/{commentID}", s.requirePermission("", s.deleteComment))
 	mux.Handle("PUT /v1/organizer/comments/{commentID}/moderate", s.requirePermission(domain.PermissionManageSubmission, s.moderateComment))
-	mux.Handle("POST /v1/comments/{commentID}/report", s.requirePermission("", s.reportComment))
+	mux.Handle("POST /v1/comments/{commentID}/report", s.guard(ratelimit.Comment, s.requirePermission("", s.reportComment)))
 	mux.Handle("GET /v1/organizer/reports", s.requirePermission(domain.PermissionManageSubmission, s.listReports))
 	mux.Handle("PUT /v1/organizer/reports/{reportID}", s.requirePermission(domain.PermissionManageSubmission, s.resolveReport))
 	mux.HandleFunc("GET /v1/events/{slug}/vote-campaigns", s.listCampaigns)
+	mux.Handle("GET /v1/events/{slug}/vote/ballot", s.guard(ratelimit.Ballot, s.optionalAuth(s.ballotOptions)))
 	mux.Handle("POST /v1/organizer/events/{slug}/vote-campaigns", s.requirePermission(domain.PermissionManageEvent, s.createCampaign))
 	mux.Handle("PUT /v1/organizer/vote-campaigns/{campaignID}/{status}", s.requirePermission(domain.PermissionManageEvent, s.setCampaignStatus))
-	mux.Handle("POST /v1/events/{slug}/vote", s.requirePermission("", s.castVotes))
+	mux.Handle("POST /v1/events/{slug}/vote", s.guard(ratelimit.Ballot, s.requirePermission("", s.castVotes)))
 	mux.Handle("GET /v1/events/{slug}/vote", s.optionalAuth(s.voteResults))
 	mux.Handle("GET /v1/vote/mine", s.requirePermission("", s.myVotes))
-	mux.HandleFunc("GET /v1/events/{slug}/webhooks", s.listWebhooks)
+	mux.Handle("GET /v1/events/{slug}/webhooks", s.requirePermission(domain.PermissionManageIntegrations, s.listWebhooks))
 	mux.Handle("POST /v1/organizer/events/{slug}/webhooks", s.requirePermission(domain.PermissionManageIntegrations, s.createWebhook))
 	mux.Handle("DELETE /v1/organizer/webhooks/{webhookID}", s.requirePermission(domain.PermissionManageIntegrations, s.deleteWebhook))
 	mux.Handle("POST /v1/organizer/webhooks/{webhookID}/test", s.requirePermission(domain.PermissionManageIntegrations, s.testWebhook))
 	mux.Handle("GET /v1/organizer/webhooks/deliveries", s.requirePermission(domain.PermissionViewAudit, s.listDeliveries))
 	mux.Handle("POST /v1/organizer/webhooks/flush", s.requirePermission(domain.PermissionManageIntegrations, s.flushWebhooks))
-	mux.HandleFunc("GET /v1/events/{slug}/judges", s.listJudges)
+	mux.Handle("GET /v1/events/{slug}/judges", s.optionalAuth(s.listJudges))
 	mux.Handle("POST /v1/events/{slug}/judges", s.requirePermission(domain.PermissionManageEvent, s.addJudge))
 	mux.Handle("DELETE /v1/events/{slug}/judges/{judgeID}", s.requirePermission(domain.PermissionManageEvent, s.removeJudge))
 	mux.Handle("GET /v1/events/{slug}/leaderboard", s.optionalAuth(s.leaderboard))
@@ -243,11 +254,17 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/organizer/progress", s.requirePermission(domain.PermissionManageEvent, s.progress))
 	mux.Handle("GET /v1/organizer/reviews", s.requirePermission(domain.PermissionViewPeerScores, s.organizerReviews))
 	mux.Handle("GET /v1/organizer/results", s.requirePermission(domain.PermissionViewPeerScores, s.results))
+	mux.Handle("GET /v1/organizer/pairwise", s.requirePermission(domain.PermissionViewPeerScores, s.pairwise))
 	mux.Handle("GET /v1/organizer/export.csv", s.requirePermission(domain.PermissionExportData, s.exportCSV))
 	mux.Handle("GET /v1/organizer/export", s.requirePermission(domain.PermissionExportData, s.exportEvent))
 	mux.Handle("POST /v1/organizer/import", s.requirePermission(domain.PermissionManageEvent, s.importEvent))
 	mux.HandleFunc("GET /v1/openapi.json", s.openapi)
 	mux.HandleFunc("GET /v1/endpoints", s.routeCatalog)
+
+	// The HTML frontend is mounted after the API so that the explicit /v1
+	// namespace can never be shadowed by a page pattern.
+	s.registerWeb(mux)
+
 	s.routes = mux.recorded()
 	return s.middleware(mux)
 }
@@ -315,6 +332,33 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 				writeError(w, http.StatusInternalServerError, "internal_error", "an unexpected error occurred")
 			}
 		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
+// guard applies a rate-limit budget to a route.
+//
+// The key is the authenticated account when there is one and the client address
+// otherwise. Keying authenticated routes by account rather than by address
+// matters in practice: a hackathon venue, a university, or a corporate network
+// puts an entire panel behind one egress address, and a per-address budget
+// there would let the busiest attendee lock everyone else out of commenting.
+func (s *Server) guard(policy ratelimit.Policy, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := ""
+		if principal, ok := auth.PrincipalFromContext(r.Context()); ok && principal.UserID != "" {
+			key = principal.UserID
+		} else {
+			key = r.RemoteAddr
+			if index := strings.LastIndex(key, ":"); index > 0 {
+				key = key[:index]
+			}
+		}
+		if !s.limiter.Guard(w, policy, key) {
+			s.logger.Warn("rate limited a request",
+				"policy", policy.Name, "method", r.Method, "path", r.URL.Path)
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -409,7 +453,18 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"access_token": token, "user": user}})
 }
 
+// logout clears the cookie and revokes the session behind it. Clearing the
+// cookie alone is not logging out: the login response also hands back the token
+// as a bearer credential, so a client that stored that token would keep working
+// until the session expired on its own.
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	if token := auth.TokenFromRequest(r); token != "" {
+		if claims, err := s.tokens.Parse(token); err == nil && claims.SessionID != "" {
+			if err := s.tokens.Revoke(claims.SessionID, "logout"); err != nil && !errors.Is(err, auth.ErrSessionNotFound) {
+				s.logger.Warn("could not revoke session on logout", "error", err)
+			}
+		}
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     auth.SessionCookieName,
 		Value:    "",
@@ -579,9 +634,6 @@ func (s *Server) saveReview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	if request.EventID == "" {
-		request.EventID = "evt_01"
-	}
 	if len(request.Criteria) == 0 {
 		writeError(w, http.StatusUnprocessableEntity, "validation_error", "at least one criterion score is required")
 		return
@@ -591,7 +643,17 @@ func (s *Server) saveReview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "project not found")
 		return
 	}
-	rubric, err := s.store.ActiveRubric(request.EventID, project.TrackID)
+	// The event a review belongs to is the event the project belongs to. A body
+	// field cannot be allowed to choose it: taking event_id from the request
+	// would let a judge file a review against an event they were assigned in
+	// while the project actually lives somewhere else, and the row would then
+	// vanish from the leaderboard that should have counted it.
+	if request.EventID != "" && request.EventID != project.EventID {
+		writeError(w, http.StatusUnprocessableEntity, "validation_error",
+			"event_id does not match the event this project belongs to")
+		return
+	}
+	rubric, err := s.store.ActiveRubric(project.EventID, project.TrackID)
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "validation_error", "no published rubric is active for this project")
 		return
@@ -600,12 +662,12 @@ func (s *Server) saveReview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "validation_error", err.Error())
 		return
 	}
-	if !s.store.IsAssigned(request.EventID, principal.UserID, projectID) {
+	if !s.store.IsAssigned(project.EventID, principal.UserID, projectID) {
 		writeError(w, http.StatusForbidden, "forbidden", "this project is not assigned to the current judge")
 		return
 	}
 	now := s.now().UTC()
-	review := domain.Review{ID: domain.NewID("rev"), EventID: request.EventID, JudgeID: principal.UserID, ProjectID: projectID, Criteria: request.Criteria, RubricID: rubric.ID, RubricVersion: rubric.Version, Comment: request.Comment, Submitted: request.Submitted, UpdatedAt: now}
+	review := domain.Review{ID: domain.NewID("rev"), EventID: project.EventID, JudgeID: principal.UserID, ProjectID: projectID, Criteria: request.Criteria, RubricID: rubric.ID, RubricVersion: rubric.Version, Comment: request.Comment, Submitted: request.Submitted, UpdatedAt: now}
 	if request.Submitted {
 		review.SubmittedAt = &now
 	}

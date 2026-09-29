@@ -1,0 +1,77 @@
+{{define "content"}}
+<span class="overline">{{.TrackName}}</span>
+<h1>{{.Project.Title}}</h1>
+<p class="body-large muted">{{.Project.Summary}}</p>
+
+<div class="stat-row" style="margin:24px 0">
+  <div class="stat"><div class="overline">Team</div><div class="value" style="font-size:20px">{{.TeamName}}</div></div>
+  <div class="stat"><div class="overline">Track</div><div class="value" style="font-size:20px">{{.TrackName}}</div></div>
+  <div class="stat"><div class="overline">Reviews</div><div class="value" style="font-size:20px">{{.ReviewCount}}</div></div>
+  <div class="stat"><div class="overline">Submitted</div><div class="value" style="font-size:20px">{{.SubmittedOn}}</div></div>
+</div>
+
+{{if .Project.RepositoryURL}}
+<p><a href="{{.Project.RepositoryURL}}" rel="nofollow noopener">Repository</a></p>
+{{end}}
+
+{{if .Comments}}
+<div class="panel">
+  <div class="panel-head"><h2>Comments</h2></div>
+  {{range .Comments}}
+  <div style="padding:12px 0;border-bottom:1px solid var(--border)">
+    <div class="label">{{.AuthorName}}</div>
+    <p class="small" style="margin:4px 0 0">{{.Body}}</p>
+  </div>
+  {{end}}
+</div>
+{{end}}
+
+{{if .CanComment}}
+<div class="panel">
+  <div class="panel-head"><h2>Add a comment</h2></div>
+  <form method="post" action="/projects/{{.Project.ID}}/comment">
+    <div class="field">
+      <label for="body">Comment</label>
+      <textarea id="body" name="body" required maxlength="2000"></textarea>
+    </div>
+    <div style="margin-top:12px"><button class="button" type="submit">Post comment</button></div>
+  </form>
+</div>
+{{end}}
+
+{{if .CanReview}}
+<div class="panel">
+  <div class="panel-head">
+    <h2>Your review</h2>
+    {{if .ReviewSubmitted}}<span class="tag good">Submitted</span>{{else}}<span class="tag warn">Not yet submitted</span>{{end}}
+  </div>
+  {{if .ReviewSubmitted}}
+    <p class="muted small">This review is submitted and locked. A submitted score cannot be changed, which is what stops a judge from moving a project after seeing the standings.</p>
+  {{else}}
+  <form method="post" action="/judge/{{.EventSlug}}/projects/{{.Project.ID}}">
+    {{range $criterion := .Criteria}}
+    <div class="score-row">
+      <div>
+        <div class="label">{{$criterion.Label}}</div>
+        <div class="small muted">{{$criterion.Description}}</div>
+      </div>
+      {{$current := index $.Existing $criterion.Key}}
+      <select name="criterion_{{$criterion.Key}}" aria-label="{{$criterion.Label}}">
+        <option value="">—</option>
+        {{range $value := $.Scale}}<option value="{{$value}}"{{if eq $current $value}} selected{{end}}>{{$value}}</option>{{end}}
+      </select>
+    </div>
+    {{end}}
+    <div class="field" style="margin-top:16px">
+      <label for="comment">Comment</label>
+      <textarea id="comment" name="comment" maxlength="2000">{{.ReviewComment}}</textarea>
+    </div>
+    <div style="margin-top:16px;display:flex;gap:12px">
+      <button class="button secondary" type="submit" name="submitted" value="false">Save draft</button>
+      <button class="button" type="submit" name="submitted" value="true">Submit review</button>
+    </div>
+  </form>
+  {{end}}
+</div>
+{{end}}
+{{end}}

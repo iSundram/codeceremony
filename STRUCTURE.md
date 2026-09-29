@@ -1,5 +1,12 @@
 # CodeCeremony — Project Structure
 
+> **Superseded.** This is the pre-implementation plan, kept as a record of the
+> thinking. Some of it no longer matches the code: the portal has no PostgreSQL
+> and no `apps/web` frontend, because the one-command-offline rule ruled both
+> out. For what is actually built, read
+> [`ARCHITECTURE.md`](ARCHITECTURE.md), [`DATA-MODEL.md`](DATA-MODEL.md),
+> [`JUDGING.md`](JUDGING.md) and [`README.md`](README.md).
+
 > **Status:** Structure and stack baseline. Backend implementation is in progress under `backend/`.
 >
 > This document defines repository boundaries and technical direction. Product behavior belongs in `FEATURES.md`; visual rules belong in `design.md`; event constraints belong in `rules.md`.

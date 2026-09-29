@@ -94,3 +94,14 @@ func (m *Manager) sign(payload string) string {
 	_, _ = mac.Write([]byte(payload))
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
+
+// Revoke accepts a session id it has no record of. Manager is stateless by
+// design, so there is nothing to invalidate; the method exists so that a logout
+// against a stateless issuer is still a well-formed call rather than a panic on
+// a type assertion.
+func (m *Manager) Revoke(sessionID, reason string) error {
+	if strings.TrimSpace(sessionID) == "" {
+		return ErrInvalidToken
+	}
+	return nil
+}

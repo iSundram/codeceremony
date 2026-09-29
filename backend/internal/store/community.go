@@ -21,6 +21,14 @@ func (s *Store) CreateComment(comment domain.Comment) (domain.Comment, error) {
 	if _, ok := s.events[comment.EventID]; !ok {
 		return domain.Comment{}, domain.ErrNotFound
 	}
+	// The comment must be filed against the event the project belongs to.
+	// Otherwise a comment can be attached to one event's project while counting
+	// towards another event's public activity feed.
+	project, ok := s.submissions[comment.ProjectID]
+	if !ok || project.EventID != comment.EventID {
+		return domain.Comment{}, fmt.Errorf("%w: project %s does not belong to event %s",
+			domain.ErrValidation, comment.ProjectID, comment.EventID)
+	}
 	if _, ok := s.users[comment.AuthorID]; !ok {
 		return domain.Comment{}, domain.ErrNotFound
 	}
