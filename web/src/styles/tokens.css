@@ -19,15 +19,21 @@
   --accent-blue: #749dd0;
   --accent-periwinkle: #92aad1;
 
-  /* ---- §3.2 Semantic tokens ---- */
-  --color-canvas: var(--mist);
-  --color-surface: var(--mist);
-  /* 18% accent-periwinkle over mist, composited. design.md expresses this as a
-   * blend; the resolved value is a token so no component does the maths. */
-  --color-surface-muted: #c4dcf1;
-  --color-surface-raised: var(--mist);
-  /* 16% warm-gray over mist, composited. */
-  --color-surface-warm: #c9dcea;
+  /* ---- §3.2 Semantic tokens ----
+   *
+   * The surfaces are white and the six palette entries are accents on top of
+   * them, not the other way round. mist used to be both the canvas and the
+   * surface, which put a blue cast on every card, table and panel at once and
+   * left nothing for the accent to be an accent *against*: a theme where the
+   * base colour is also the brand colour reads as a single wash rather than as
+   * a light UI with brand in it. White surfaces, navy/periwinkle on the small
+   * things — a rail, an icon, a badge, a hairline. §14, light only. */
+  --color-canvas: #ffffff;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f2f6fb;
+  --color-surface-raised: #ffffff;
+  /* 10% warm-gray over white, composited. */
+  --color-surface-warm: #f5f4f2;
   --color-text-primary: var(--ink);
   --color-text-secondary: var(--navy);
   /* navy at 72% over mist, composited. This lands at 3.23:1, which clears
@@ -36,7 +42,7 @@
    * critical instructions", so the type scale carries the restriction: it is
    * only ever used at heading-2 size or above. Anything a user must read to
    * proceed uses --color-text-secondary at 5.80:1. See design.md §3.4. */
-  --color-text-muted: #6e7d9f;
+  --color-text-muted: #5a6a8c;
   --color-text-disabled: var(--warm-gray);
   /* §3.4 approves exactly five pairs, measured rather than estimated. Recorded
    * here so the next person does not have to recompute them, and so a pairing
@@ -61,13 +67,27 @@
    * that carries mist text is solid navy, and a light accent surface that
    * carries ink text is accent-periwinkle. */
   --color-text-on-dark: var(--mist);
-  --color-border: var(--accent-periwinkle);
+  /* Hairlines are navy at alpha rather than solid accent-periwinkle. §1.2
+   * permits alpha of an approved colour, and it has to be: a solid #92AAD1 rule
+   * is a brand-coloured line across every table and card divider in the product,
+   * which is the accent doing structural work instead of signalling. Resolved
+   * over white this lands at #E2E4EA — a hairline you see as an edge rather than
+   * as a colour. The strong border stays navy for the cases that need to be
+   * seen. */
+  --color-border: rgba(72, 84, 124, 0.16);
   --color-border-strong: var(--navy);
   --color-accent: var(--accent-blue);
-  --color-accent-soft: var(--accent-periwinkle);
+  /* The soft accent is a tint of the periwinkle, not the periwinkle itself.
+   * Solid #92AAD1 as a fill behind a nav item or a badge is a large field of
+   * brand colour — it reads as a blob at 84px wide and it competes with the
+   * content beside it. At 28% over white it is #E0E7F2: still unmistakably the
+   * brand, still 10:1 under ink, and small enough to stay an accent. The
+   * active-state signal that has to survive greyscale is the navy rail and the
+   * weight, per §6.1, not this fill. */
+  --color-accent-soft: rgba(146, 170, 209, 0.28);
   --color-focus: var(--navy);
-  /* navy at 24% over mist, composited. */
-  --color-overlay: #afc4da;
+  /* navy at 16% over white, composited. */
+  --color-overlay: rgba(72, 84, 124, 0.16);
   /* navy at the approved alpha levels in §3.6. */
   --color-shadow: rgba(72, 84, 124, 0.08);
   --color-shadow-1: rgba(72, 84, 124, 0.1);
@@ -93,6 +113,22 @@
   --gradient-ink: linear-gradient(135deg, #48547c 0%, #749dd0 100%);
   --gradient-mist: linear-gradient(135deg, #cfe7f8 0%, #92aad1 100%);
   --gradient-warm: linear-gradient(135deg, #cfe7f8 0%, #aaa59f 100%);
+  /* The primary action. Navy to ink and back to navy: a fold catching light on
+   * its far side. It uses only the two dark palette entries because `mist` on a
+   * light stop is 1.85:1 and 2.20:1, so a ramp that travels through the light
+   * tones has an unreadable patch in it. Worst case here is 5.80:1. §3.5. */
+  --gradient-folded: linear-gradient(165deg, #48547c 0%, #33343b 52%, #48547c 100%);
+  /* The page canvas, and the only radial gradient the system allows. It sits
+   * behind the opaque content panel, so no glyph is ever rendered on a soft
+   * edge — which is what §2.3 was protecting. §3.5.
+   *
+   * The wash is faint on purpose. It exists so the white content panel has
+   * something to be white *against*; at the old strengths it made the page
+   * itself blue and the panel merely less blue, which inverts the relationship
+   * the inset panel is supposed to have with its canvas. */
+  --canvas-wash:
+    radial-gradient(at 10% -12%, rgba(146, 170, 209, 0.22) 0px, transparent 55%),
+    radial-gradient(at 94% 2%, rgba(72, 84, 124, 0.06) 0px, transparent 50%);
 
   /* ---- §4.1 Font stacks. System fallbacks only; no font is fetched. ---- */
   --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -129,9 +165,17 @@
   /* ---- §5.2 Application shell ---- */
   --shell-sidebar: 264px;
   --shell-sidebar-collapsed: 84px;
-  --shell-topbar: 72px;
+  /* The rail's width, which the content panel reserves. The sidebar floats above
+   * the panel rather than sitting beside it, so the panel has to know how much
+   * room to leave — otherwise expanding the sidebar pushes the content sideways
+   * and the whole page reflows on a click. §5.2 as amended. */
+  --shell-rail: var(--shell-sidebar-collapsed);
+  --shell-topbar: 80px;
   --shell-topbar-mobile: 56px;
   --shell-content-max: 1440px;
+  /* The panel is inset from the canvas, so the padding that used to live on the
+   * window now lives inside the panel. §5.2 as amended. */
+  --shell-inset: 4px;
   --shell-padding-desktop: 32px;
   --shell-padding-tablet: 24px;
   --shell-padding-mobile: 16px;
@@ -143,11 +187,58 @@
   --shadow-1: 0 8px 24px rgba(72, 84, 124, 0.1);
   --shadow-2: 0 20px 50px rgba(72, 84, 124, 0.14);
 
-  /* ---- §9.1 Radius scale. Five values, no others. ---- */
+  /* Frosted surfaces carry an inset top highlight. A translucent panel without
+   * one has no edge and reads as a hole; the highlight is what makes it read as
+   * glass. Two shadows, which remains the ceiling. §3.6, §3.7. */
+  --shadow-folded:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    0 1px 2px rgba(72, 84, 124, 0.06),
+    0 12px 32px rgba(72, 84, 124, 0.1);
+  --shadow-lifted:
+    inset 0 1px 0 rgba(255, 255, 255, 0.65),
+    0 2px 4px rgba(72, 84, 124, 0.08),
+    0 24px 56px rgba(72, 84, 124, 0.16);
+  /* Navy-tinted, not a coloured glow, and only ever on a surface that already
+   * carries --gradient-folded. §3.6. */
+  --shadow-brand: 0 12px 28px -10px rgba(72, 84, 124, 0.38);
+
+  /* ---- §3.7 Frosted surfaces. The blur is a background treatment. Text on a
+   * frosted surface belongs in its own solid content region or on an opaque
+   * child, because contrast over a backdrop that moves with scroll is not
+   * measurable. ---- */
+  --frost-blur: blur(16px) saturate(140%);
+  --frost-blur-deep: blur(24px) saturate(150%);
+  /* At least 72% opacity, per §3.7 rule 1. Below that the blur stops being a
+   * surface and starts being the page showing through.
+   *
+   * The three surfaces are deliberately not the same white. The panel is the
+   * brightest thing on the page because it holds the content; the sidebar and
+   * the top bar sit a shade under it so chrome reads as chrome and the panel
+   * reads as the document laid on top of it. Both would be indistinguishable at
+   * a single value, and two identical whites sharing an edge is the exact
+   * intersection the inset panel exists to avoid. */
+  --frost-topbar: rgba(252, 253, 255, 0.9);
+  --frost-sidebar: rgba(243, 247, 252, 0.94);
+  --frost-panel: rgba(255, 255, 255, 0.96);
+  --frost-menu: rgba(255, 255, 255, 0.96);
+  /* Navy at alpha, not white at alpha. A white hairline was the right call when
+   * the surfaces were mist and the border had to be lighter than its field; on
+   * white it is invisible, and every frosted panel lost the edge that told it
+   * where the panel ended. §1.2, alpha of an approved colour. */
+  --frost-hairline: rgba(72, 84, 124, 0.14);
+  --frost-edge: rgba(72, 84, 124, 0.12);
+
+  /* ---- §9.1 Radius scale. Seven values, no others. ---- */
   --radius-small: 8px;
   --radius-control: 12px;
   --radius-card: 16px;
   --radius-panel: 24px;
+  /* Above 24px, for exactly two surfaces: a 24px corner on a 1200px panel reads
+   * as a rounded rectangle, a 32px one reads as a surface floating above
+   * another. §9.1. */
+  --radius-surface: 32px;
+  /* Capped at one per page so it stays a signal. §9.1. */
+  --radius-feature: 40px;
   --radius-pill: 999px;
 
   /* ---- §10.1 Icon sizes, and the one glyph a stylesheet has to carry.

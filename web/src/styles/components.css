@@ -42,18 +42,49 @@
  * clears 4.5:1 is solid navy at 5.80:1 — so the primary action is navy. Ink is
  * the pressed state, at 9.70:1 against mist. §8.1 naming gradient.ink for this
  * slot is a design decision this file cannot make on its own and is reported. */
+/* The primary action. §8.1 and §3.5: gradient.folded, which travels navy to ink
+ * and back, so the control has a direction and a top edge instead of being one
+ * flat colour.
+ *
+ * Two details carry most of it. The inset highlight is the fold catching light
+ * along its top edge — without it a translucent-looking gradient on a rounded
+ * rectangle still reads flat. And the label is overline weight, uppercase and
+ * wide-tracked, which is what turns a filled rectangle into a control that looks
+ * deliberate at a glance; §4.2 as amended allows it on explicitly branded labels,
+ * and the primary action is the most branded label in the product.
+ *
+ * mist on the ramp measures 5.80:1 at its lightest and 9.70:1 at its darkest, so
+ * the label passes AA everywhere on the surface and there is no angle at which
+ * part of it becomes unreadable. */
 .btn--primary {
-  background: var(--color-border-strong);
-  color: var(--color-text-on-dark);
-  box-shadow: var(--shadow-0);
+  background: var(--gradient-folded);
+  background-color: var(--navy);
+  color: var(--mist);
+  font: var(--text-overline);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border-color: transparent;
+  box-shadow: var(--shadow-folded);
 }
 
 .btn--primary:hover {
-  box-shadow: var(--shadow-1);
+  box-shadow: var(--shadow-brand);
 }
 
+/* Pressed: the surface settles rather than brightening. Scaling by a hair is
+ * the physical half of that — a control that has been pressed should not occupy
+ * exactly the same space as one that has not. */
 .btn--primary:active {
   background: var(--ink);
+  box-shadow: var(--shadow-0);
+  scale: 0.985;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn--primary:active {
+    scale: none;
+  }
 }
 
 .btn--secondary {
@@ -247,7 +278,9 @@
 .textarea {
   min-height: 120px;
   resize: vertical;
-  line-height: var(--text-body);
+  /* line-height comes from `font: var(--text-body)` in the rule above. It used
+   * to be reasserted as `line-height: var(--text-body)`, which is invalid — the
+   * token is a font shorthand — and was therefore dropped. */
 }
 
 .select {
@@ -971,8 +1004,25 @@
   vertical-align: middle;
 }
 
-.table tbody tr:last-child td {
+.table tbody tr:last-child td,
+.table tbody tr:last-child th {
   border-bottom: 0;
+}
+
+/* Row headers. §8.5's header rule above is an overline treatment for column
+ * heads, which is wrong for the first cell of a row: a screen reader needs
+ * `scope="row"` on a `<th>` to associate every other cell with its entity, and
+ * a row header that arrives in tracked capitals is unreadable as a row label.
+ * So the column rule is restated here rather than being inherited. */
+.table tbody th {
+  text-align: left;
+  font: var(--text-body);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  text-transform: none;
+  letter-spacing: normal;
+  border-bottom: 1px solid var(--color-border);
+  white-space: normal;
 }
 
 .table tbody tr {
@@ -994,7 +1044,9 @@
 
 .table__meta {
   color: var(--color-text-secondary);
-  font-size: var(--text-body-small);
+  /* `font` rather than `font-size`: --text-body-small is a shorthand, so the
+   * longhand form was dropped and metadata rendered at full body size. */
+  font: var(--text-body-small);
 }
 
 .table__primary {
@@ -1114,8 +1166,10 @@
   border-radius: var(--radius-control);
   background: var(--color-surface-muted);
   color: var(--color-text-primary);
+  /* `font` sets size, family, weight and line-height together; the second
+   * declaration that reasserted line-height from the same token was invalid
+   * and dropped. */
   font: var(--text-code);
-  line-height: var(--text-code);
   white-space: pre;
 }
 

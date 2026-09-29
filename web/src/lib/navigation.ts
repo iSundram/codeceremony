@@ -1,4 +1,4 @@
-import type { IconName } from "./icons";
+import type { NavGroup, NavItem } from "../components/shell";
 
 /**
  * The application map.
@@ -12,23 +12,19 @@ import type { IconName } from "./icons";
  * URL they were not shown is refused by the resolver, not by this list. That is
  * why `roles` here is about navigation and not about access, and why the name of
  * the field says so.
+ *
+ * The item and group shapes themselves live with the shell that renders them,
+ * so there is one definition to change instead of two that had already begun to
+ * drift and needed a cast to be used together.
  */
-export interface NavItem {
-  label: string;
-  to: string;
-  icon: IconName;
-  /** Exact match rather than prefix, for an index route with siblings. */
-  end?: boolean;
-}
+export type { NavGroup, NavItem };
 
-export interface NavGroup {
-  label: string;
+export interface MappedGroup extends NavGroup {
   /** Which roles are offered this group. Empty means everyone, signed out included. */
   roles: string[];
-  items: NavItem[];
 }
 
-export const navigation: NavGroup[] = [
+export const navigation: MappedGroup[] = [
   {
     label: "Overview",
     roles: ["visitor", "participant", "judge", "organizer", "admin"],

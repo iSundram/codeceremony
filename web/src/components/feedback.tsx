@@ -141,9 +141,17 @@ export function Progress({ label, value, total, secondary = false }: ProgressPro
 
 // design.md 8.8: Skeleton uses surface-muted and the border colour, and must not
 // shimmer continuously by default. So there is no animation here at all.
-export function Skeleton({ lines = 3 }: { lines?: number }) {
+//
+// The wrapper is a live region: every bar is aria-hidden, so without this a
+// loading surface was silent to assistive technology — the screen reader stayed
+// on the previous page's content while the sighted reader watched bars arrive.
+// `LoadingState` already carried a status role and was used nowhere; putting it
+// on the component every page actually renders means the fix cannot be forgot
+// at the call site.
+export function Skeleton({ lines = 3, label = "Loading" }: { lines?: number; label?: string }) {
   return (
-    <div className="stack stack-3">
+    <div className="stack stack-3" role="status" aria-live="polite">
+      <span className="visually-hidden">{label}</span>
       {Array.from({ length: lines }, (_, index) => (
         // Each bar is hidden individually rather than the wrapper, so a
         // consumer that renders one bar on its own still hides it.
@@ -170,7 +178,11 @@ export function EmptyState({
       <span className="empty-state__icon">
         <Icon name={icon} size={24} />
       </span>
-      <p className="empty-state__title">{title}</p>
+      {/* A heading, not a paragraph: several surfaces render an empty state as
+          the whole page — an unknown admin route, a judge with no assignments —
+          and a page whose only title was a `<p>` had nothing to land on after
+          the route change moved focus into main. */}
+      <h2 className="empty-state__title">{title}</h2>
       <p className="empty-state__text">{body}</p>
       {action ? <div className="alert__actions">{action}</div> : null}
     </div>
@@ -191,7 +203,7 @@ export function ErrorState({
       <span className="error-state__icon">
         <Icon name="circle-alert" size={24} />
       </span>
-      <p className="error-state__title">{title}</p>
+      <h2 className="error-state__title">{title}</h2>
       <p className="error-state__text">{body}</p>
       {retry ? <div className="alert__actions">{retry}</div> : null}
     </div>
@@ -245,14 +257,23 @@ export function Modal({ open, title, children, actions, onClose, closeLabel = "C
   const panel = useRef<HTMLDivElement>(null);
   const trigger = useRef<Element | null>(null);
   const titleId = useId();
+  // Read through a ref so the effect below depends on `open` alone. Callers
+  // pass `() => setConfirming(false)`, a new function on every render; with it
+  // in the dependency array the trap re-ran on each render, re-capturing
+  // `document.activeElement` from wherever focus was and re-focusing the first
+  // control in the dialog — so a button that set a busy flag could have focus
+  // pulled out of it mid-request, and the element remembered as "the trigger"
+  // became a control inside the dialog, so closing never restored focus at all.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
 
   useEffect(() => {
-    trigger.current = document.activeElement;
     if (!open) return;
+    trigger.current = document.activeElement;
 
     function onKey(event: KeyboardEvent) {
       if (event.key === "Escape") {
-        onClose();
+        closeRef.current();
         return;
       }
       if (event.key !== "Tab" || !panel.current) return;
@@ -280,7 +301,7 @@ export function Modal({ open, title, children, actions, onClose, closeLabel = "C
       document.removeEventListener("keydown", onKey);
       (trigger.current as HTMLElement | null)?.focus();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 

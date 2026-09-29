@@ -68,6 +68,24 @@ layer from sections 3 to 5, and 40 tests that assert the accessibility rules in
 section 13. Hiding a link in the UI is never the access control; every route
 authorizes in the backend.
 
+**The shell and the theme.** The application frame is one idea — an 80px frosted
+header, a rail sidebar, and the content on an inset panel with a 32px radius —
+and it is written in `web/src/styles/frame.css`, imported **last** in
+`main.tsx` so it wins by import order rather than by specificity. The sidebar is
+a flex column *beside* the panel (`.shell__body` supplies the inset and the gap),
+not a layer floating over it, so the two frosted surfaces never intersect. That
+frame file also carries the rules that only make sense at 84px: the collapsed
+rail's icon sizing, its centred active marker, and the `position: relative` the
+active marker needs — `.sidebar` has a `backdrop-filter`, which makes it the
+containing block for absolutely positioned descendants, so without it every
+item's marker resolved against the sidebar instead of the item.
+
+Surfaces are **white** and the six palette entries are accents on top of them:
+`navy`/`accent-blue`/`accent-periwinkle` appear on the small things — a rail, an
+icon, a badge, a hairline — and nowhere as a large field. Hairlines are navy at
+alpha, because a white hairline on a white surface is invisible. Light theme
+only, per §14; there is no dark mode and no theme switch.
+
 Claimed in `.dogfood.toml` as T1–T3. The acceptance checker has no T3 tests, so
 its report says `verified T1 T2`; that is the checker's coverage, not a failure.
 T4 is deliberately not claimed.

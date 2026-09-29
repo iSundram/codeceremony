@@ -1,0 +1,227 @@
+/* The shell frame, in one file imported last.
+ *
+ * It is separate from shell.css on purpose. The frame is the one part of the
+ * layout that has to be right — header, sidebar and content panel are a single
+ * idea, and a partial override leaves a page that looks broken in a way nobody
+ * can name. Keeping it here means it wins by import order rather than by
+ * specificity, so a later edit to shell.css cannot half-revert it and leave a
+ * grid shell underneath a flex top bar.
+ *
+ * What it does: the window stops scrolling and the content moves onto an inset
+ * frosted panel, so the page reads as a document on a desk rather than a field
+ * with a stripe down the side. §3.7 for the frosting, §5.2 as amended for the
+ * panel, §6.1 for the rail. */
+
+.shell {
+  /* The window itself does not scroll. Content scrolls inside `.main`, so the
+   * header and the sidebar stay put and the page reads as a document on a desk
+   * rather than as one long field with a stripe down the side. */
+  position: relative;
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--canvas-wash);
+  background-attachment: fixed;
+}
+
+.topbar {
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 30;
+}
+
+.shell__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+  gap: var(--shell-inset);
+  padding: var(--shell-inset);
+}
+
+.sidebar {
+  flex: 0 0 auto;
+  width: var(--shell-sidebar);
+  min-height: 0;
+  /* shell.css gives the frame a padding-top that was there to offset the old
+   * absolutely-positioned rail. `.sidebar__scroll` carries its own padding now,
+   * so leaving this on stacked the two and opened a double gap under the brand. */
+  padding-top: 0;
+  border-radius: var(--radius-surface);
+  background: var(--frost-sidebar);
+  backdrop-filter: var(--frost-blur);
+  -webkit-backdrop-filter: var(--frost-blur);
+  border: 1px solid var(--frost-hairline);
+  box-shadow: var(--shadow-folded);
+  overflow: hidden;
+  transition: width var(--motion-fast) var(--ease-standard);
+}
+
+.sidebar--collapsed {
+  width: var(--shell-sidebar-collapsed);
+}
+
+@media (max-width: 1023px) {
+  /* shell.css collapses the nav to an icon rail at this width — labels are
+   * visually hidden and the items centre — but it expressed that by shrinking
+   * `.shell`'s grid template, and `.shell` is a flex column now. Without this,
+   * the frame's own `width: var(--shell-sidebar)` leaves a 264px column of
+   * centred 22px icons with 180px of frosted nothing beside them. The rail
+   * state wins over the breakpoint in either direction, because an explicitly
+   * collapsed rail at 1024px and an implicit one at 900px are the same shape. */
+  .sidebar {
+    width: var(--shell-sidebar-collapsed);
+  }
+
+  .sidebar.sidebar--collapsed {
+    width: var(--shell-sidebar-collapsed);
+  }
+}
+
+.main {
+  /* shell.css reserves `inset + --shell-rail` on the leading edge, because the
+   * old sidebar floated *over* the panel and the panel had to leave room for it.
+   * The sidebar is a flex sibling now, so that reserve is a phantom column: the
+   * panel sits 84px clear of a sidebar that is already beside it, and the two
+   * frosted surfaces interlock around a dead stripe. `.shell__body` supplies the
+   * inset and the gap; the panel itself takes no margin at all. */
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  border-radius: var(--radius-surface);
+  background: var(--frost-panel);
+  backdrop-filter: var(--frost-blur);
+  -webkit-backdrop-filter: var(--frost-blur);
+  border: 1px solid var(--frost-hairline);
+  box-shadow: var(--shadow-folded);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* There is deliberately no `@media (max-width: 1023px)` case for `.main`.
+ *
+ * The panel used to reserve `--shell-rail` when the sidebar floated over it and
+ * nothing when it did not, which is what the breakpoint below was for. The
+ * sidebar is a flex sibling at every width now, and `.shell__body` owns the
+ * inset, so the margin is zero on both sides of the breakpoint. A rule that
+ * re-added `margin-inline-start: var(--shell-inset)` here would reintroduce a
+ * dead stripe on exactly the screens that have the least room for one. */
+
+/* The public shell is deliberately NOT the inset panel.
+ *
+ * `.public-shell__main` carries `class="main"` so it inherits the panel's scroll
+ * behaviour, and inheriting the panel's geometry as well meant the two pages
+ * outside the application shell — the landing page and sign-in — reserved
+ * --shell-rail for a sidebar they do not have. On a 1440px viewport that pushed
+ * every pixel of them 268px right and left a dead column down the left edge.
+ *
+ * The header still frosts: it is chrome, and chrome should look like chrome. The
+ * content does not, because there is no chrome around it to be inset from. */
+.public-shell {
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--canvas-wash);
+  background-attachment: fixed;
+}
+
+.public-shell .main {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+  overflow-y: auto;
+}
+
+/* ---- The nav item's own box -------------------------------------------- */
+
+/* The active indicator below is `position: absolute`, and nothing above it in
+ * the chain was positioned — except `.sidebar`, which is: a non-`none`
+ * `backdrop-filter` makes an element the containing block for its absolutely
+ * positioned descendants (filter-effects-1). So every active item's marker
+ * resolved against the sidebar instead of the item: one dash 3px below the top
+ * of the column, detached from the row it was supposed to mark, and the row
+ * that owned it left with no marker at all. Positioning the item is what makes
+ * the pseudo-element mean what it says, at full width and collapsed alike. */
+.nav-item {
+  position: relative;
+}
+
+/* ---- The collapsed rail -------------------------------------------------
+ * Three defects that only appear at 84px, where there is no room to show a
+ * group label and no margin to hide a divider in. */
+
+/* The group rule. A 1px border across an 84px column with icons on it reads as
+ * a stray line cutting the rail in half, and it separated groups that the icons
+ * had already separated. The spacing stays, because the grouping is what makes
+ * a column of icons navigable. */
+.shell--collapsed .nav-group + .nav-group {
+  border-top: 0;
+  padding-top: 0;
+  margin-top: var(--space-4);
+}
+
+/* Centred above the glyph rather than on the item's edge. `inset-block-start:
+ * 3px` combined with a vertical centring translate put the marker's centre 3px
+ * from the top of a 44px row, which is half off the edge — the stray dash. It
+ * clears the icon now. */
+.shell--collapsed .nav-item--active::before,
+.shell--collapsed .nav-item[aria-current="page"]::before {
+  inset-inline-start: 50%;
+  translate: -50% 0;
+  inset-block-start: 5px;
+  width: 16px;
+  height: 3px;
+  border-radius: 0 0 3px 3px;
+}
+
+.shell--collapsed .nav-item {
+  border-radius: var(--radius-control);
+}
+
+/* The identity in the rail is the initial alone, so the row needs to be square
+ * rather than a 44px-tall strip with one glyph in the middle of it. */
+.shell--collapsed .sidebar__identity {
+  padding: var(--space-2) 0;
+  justify-content: center;
+}
+
+/* The rail's icons. §10.1 fixes the family, the 24px grid and the 1.75px stroke,
+ * and it is not what is wrong with them: 1.75px of navy at 20px on a light
+ * frosted rail renders as a hairline. The weight is the contract's; the size and
+ * the colour are this file's, and both move toward legibility rather than
+ * toward a different icon set. 24px is the top of §10.1's approved range, and
+ * in an icon-only rail the glyph carries the whole label — it needs the room the
+ * label has just given up. `display: flex` on the wrapper is what stops the
+ * inline SVG sitting on the text baseline of a box it does not fill. */
+.shell--collapsed .nav-item__icon {
+  color: var(--navy);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.shell--collapsed .nav-item--active .nav-item__icon,
+.shell--collapsed .nav-item[aria-current="page"] .nav-item__icon {
+  color: var(--ink);
+}
+
+.shell--collapsed .nav-item .icon {
+  width: 24px;
+  height: 24px;
+}
+
+/* Hover in an icon-only rail is the only thing that says "this is a link"
+ * before the click, so it has to be a field rather than a colour change. */
+.shell--collapsed .nav-item:hover {
+  background: var(--color-accent-soft);
+  color: var(--ink);
+}

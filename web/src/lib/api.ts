@@ -277,6 +277,30 @@ export const api = {
   createGrant: (grant: NewGrant) => request<{ data: Grant }>("/grants", { method: "POST", body: grant }),
   revokeGrant: (id: string) => request<{ data: { id: string; revoked: boolean } }>(`/grants/${id}`, { method: "DELETE" }),
 
+  // ---- administration of accounts
+  //
+  // These used to be a bare `fetch("/v1/admin/users")` in the admin app, which
+  // re-declared the API prefix the client exists to keep in exactly one place,
+  // and returned a plain Error that the shared error copy never saw. They are
+  // here so the response shape, the credentials and the error type are the same
+  // as every other call.
+  adminUsers: () => request<{ data: AdminUser[] }>("/admin/users"),
+  adminSetUserState: (userID: string, state: AdminUserState, reason: string) =>
+    request<{ data: AdminUser }>(`/admin/users/${encodeURIComponent(userID)}/state`, {
+      method: "PATCH",
+      body: { state, reason },
+    }),
+  adminSetUserRole: (userID: string, role: string, reason: string) =>
+    request<{ data: AdminUser }>(`/admin/users/${encodeURIComponent(userID)}/role`, {
+      method: "PUT",
+      body: { role, reason },
+    }),
+  adminRevokeUserSessions: (userID: string, reason: string) =>
+    request<{ data: { revoked: number } }>(
+      `/admin/users/${encodeURIComponent(userID)}/sessions/revoke`,
+      { method: "POST", body: { reason } },
+    ),
+
   // ---- comparisons, the first-class pairwise question
   comparisons: (slug: string) => request<ComparisonResponse>(`/events/${slug}/comparisons`),
   recordComparison: (slug: string, comparison: NewComparison) =>
@@ -606,6 +630,24 @@ export interface AuditEntry {
   request_id?: string;
   hash: string;
   prev_hash: string;
+}
+
+/** The states the backend will accept for an account, from domain.AccountState. */
+export type AdminUserState =
+  | "pending"
+  | "active"
+  | "suspended"
+  | "deactivated"
+  | "locked"
+  | "deletion_pending";
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  display_name: string;
+  role: string;
+  state: AdminUserState | string;
+  created_at: string;
 }
 
 export interface AuditResponse {

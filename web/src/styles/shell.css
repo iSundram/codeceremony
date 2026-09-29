@@ -29,17 +29,16 @@
   flex-direction: column;
   min-height: 0;
   background: var(--color-surface);
+  /* The navigation itself is the scroll container. The rules that used to say
+   * so lived on `.sidebar__scroll`, a class no markup ever carried, so the
+   * sidebar had no vertical padding and — worse — no overflow: a viewer with
+   * enough navigation to exceed the row height simply lost the bottom of it. */
+  overflow-y: auto;
+  padding-top: var(--space-4);
   /* §6.1 allows a subtle accent-periwinkle alpha layer if needed. It is not
    * needed here: the canvas and the surface are both mist, so the sidebar is
    * separated by its right border alone, which is what §9.2 prefers. */
   border-right: 1px solid var(--color-border);
-}
-
-.sidebar__scroll {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  padding: var(--space-4) var(--space-3) var(--space-6);
 }
 
 .sidebar__footer {
@@ -55,7 +54,9 @@
  * space, which is the height of the smallest logo mark. ---- */
 
 .sidebar-brand {
-  grid-area: brand;
+  /* The brand lockup moved into the header when the sidebar stopped being a grid
+   * column with a cell of its own above it. These rules remain for the mobile
+   * drawer, which still carries the lockup. */
   display: flex;
   align-items: center;
   height: var(--shell-topbar);
@@ -126,6 +127,9 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font: var(--text-overline);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 
 .nav-item:hover {
@@ -153,6 +157,24 @@
   box-shadow: var(--shadow-0);
 }
 
+/* The leading rail. §6.1 says the active state is never carried by colour
+ * alone, and a soft blue fill on a mist background is colour alone — it fails
+ * that clause in greyscale and under a red-green colour difference. The rail is
+ * 2px of navy, which is the approved `navy on mist` pair at 5.80:1 and needs no
+ * hue discrimination to see. */
+.nav-item--active::before,
+.nav-item[aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 0;
+  inset-block: 50% auto;
+  translate: 0 -50%;
+  width: 2px;
+  height: 20px;
+  border-radius: 0 2px 2px 0;
+  background: var(--navy);
+}
+
 .nav-item--active .nav-item__icon,
 .nav-item[aria-current="page"] .nav-item__icon {
   color: var(--color-text-primary);
@@ -163,7 +185,7 @@
  * is a React component, so a class is the state it can actually set. ---- */
 
 .shell--collapsed {
-  grid-template-columns: var(--shell-sidebar-collapsed) minmax(0, 1fr);
+  --shell-rail: var(--shell-sidebar-collapsed);
 }
 
 .shell--collapsed .sidebar-brand {
@@ -202,16 +224,34 @@
 /* ---- §6.3 Top bar. 72px desktop, 56px mobile. Approved slots only:
  * navigation trigger, page context, utility actions, status. ---- */
 
+/* Frosted, per §3.7. The bar spans the full width above the panel and the
+ * sidebar, so the three frosted surfaces read as one chrome layer with the
+ * content inset below it, rather than as three separate boxes. */
 .topbar {
-  grid-area: topbar;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: var(--space-4);
+  gap: var(--space-5);
   height: var(--shell-topbar);
-  padding: 0 var(--shell-padding-desktop);
-  background: var(--color-surface);
-  border-bottom: 1px solid var(--color-border);
+  padding-inline: var(--space-5);
+  background: var(--frost-topbar);
+  backdrop-filter: var(--frost-blur);
+  -webkit-backdrop-filter: var(--frost-blur);
+  border-bottom: 1px solid var(--frost-hairline);
+  box-shadow: 0 1px 0 rgba(72, 84, 124, 0.04);
+  z-index: 30;
   min-width: 0;
+}
+
+/* The divider that separates the utility slots. §6.3 fixes the top bar's slots;
+ * a hairline is what tells the reader where one ends and the next begins,
+ * without a border on every button. */
+.topbar__divider {
+  align-self: center;
+  width: 1px;
+  height: 24px;
+  background: var(--frost-edge);
+  flex: 0 0 auto;
 }
 
 .topbar__context {
@@ -268,7 +308,6 @@
 }
 
 /* ---- §7.2 Breadcrumbs ---- */
-
 .breadcrumbs {
   display: flex;
   align-items: center;
@@ -303,15 +342,45 @@
 
 /* ---- Main region ---- */
 
+/* The inset panel. This is the change that makes the page read as a document on
+ * a desk rather than a field with a stripe down the side: content has an edge,
+ * the scrollbar belongs to the panel, and the frosted navigation around it reads
+ * as chrome. §5.2 as amended. */
 .main {
-  grid-area: main;
+  flex: 1 1 auto;
   min-width: 0;
+  min-height: 0;
+  margin: var(--shell-inset);
+  margin-inline-start: calc(var(--shell-inset) + var(--shell-rail));
+  border-radius: var(--radius-surface);
+  background: var(--frost-panel);
+  backdrop-filter: var(--frost-blur);
+  -webkit-backdrop-filter: var(--frost-blur);
+  border: 1px solid var(--frost-hairline);
+  box-shadow: var(--shadow-folded);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* The panel's own padding. It rises with the viewport because a content column
+ * that runs the full width of a 1440px display has neither a measure nor a
+ * hierarchy — the extra room is what keeps a line of body text readable. */
+.main__inner {
+  max-width: var(--shell-content-max);
+  margin-inline: auto;
   padding: var(--space-8) var(--shell-padding-desktop) var(--space-16);
 }
 
-.main__inner {
-  max-width: var(--shell-content-max);
-  margin: 0 auto;
+@media (min-width: 768px) {
+  .main__inner {
+    padding-inline: var(--space-10);
+  }
+}
+
+@media (min-width: 1440px) {
+  .main__inner {
+    padding: var(--space-12) var(--space-12) var(--space-16);
+  }
 }
 
 .page-head {
@@ -589,15 +658,39 @@
   gap: var(--space-3);
 }
 
+/* The name and the role stack rather than sitting side by side: at 80px tall
+ * with a divider on either side, a two-line block reads as an identity and a
+ * one-line "Rhea Organizer" reads as a label. The role is the overline weight so
+ * it reads as a category, not as a second name. */
+.topbar__identity {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+
 .topbar__account-name {
   font: var(--text-label);
-  font-weight: 600;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  max-width: 20ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .topbar__account-role {
-  font: var(--text-body-small);
+  font: var(--text-overline);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   color: var(--color-text-secondary);
-  text-transform: capitalize;
+}
+
+@media (max-width: 767px) {
+  .topbar__account-name,
+  .topbar__account-role {
+    display: none;
+  }
 }
 
 .breadcrumbs__list {
@@ -665,4 +758,219 @@
   min-height: 0;
   overflow-y: auto;
   padding: var(--space-4) var(--space-3);
+}
+
+/* ---- The two surfaces outside the shell ----------------------------------
+ *
+ * The landing page and the sign-in page render without a sidebar, so they had
+ * no header at all — and with the top bar gone, the only "Sign in" control in
+ * the product went with it. .public-header is that missing slot: the lockup, a
+ * short navigation, and the account action, at the top bar's own dimensions so
+ * the two do not feel like different products.
+ */
+
+.public-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.public-shell__main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.public-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  min-height: var(--shell-topbar);
+  padding: var(--space-2) var(--shell-padding-desktop);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* The lockup is artwork per §10.2, so the heading wrapper adds no type of its
+ * own — it exists to make the entry point a top-level heading. */
+.public-header__brand {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  font: inherit;
+}
+
+.public-header__logo {
+  /* The lockup is a 3:1 lockup with the mark and the wordmark on one line, so
+   * its height sets its width. At 22px it rendered 66px wide in a 1440px
+   * header and read as a stray mark rather than the product name. */
+  height: 44px;
+  width: auto;
+}
+
+.public-header__nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.public-header__link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--nav-item-min);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-control);
+  color: var(--color-text-secondary);
+  font: var(--text-body);
+  text-decoration: none;
+  transition: background-color var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard);
+}
+
+.public-header__link:hover {
+  background: var(--accent-periwinkle-08);
+  color: var(--color-text-primary);
+}
+
+.public-header__link[aria-current="page"] {
+  background: var(--color-accent-soft);
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.public-header__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-left: auto;
+  min-width: 0;
+}
+
+@media (max-width: 767px) {
+  .public-header {
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-4);
+    padding: var(--space-2) var(--shell-padding-mobile);
+  }
+
+  .public-header__nav {
+    order: 3;
+    width: 100%;
+    border-top: 1px solid var(--color-border);
+    padding-top: var(--space-1);
+  }
+
+  .public-header__actions .topbar__account-name,
+  .public-header__actions .topbar__account-role {
+    display: none;
+  }
+}
+
+/* ---- The header's brand lockup and rail toggle -----------------------------
+ * Added when the brand moved out of the sidebar's own grid cell. The lockup is
+ * the largest text on the chrome, at overline weight and wide tracking, so the
+ * eye lands on the product before the page title rather than after it. */
+
+.topbar__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 0 0 auto;
+  text-decoration: none;
+  color: var(--color-text-primary);
+}
+
+.topbar__brand-name {
+  /* §4.2's overline size, raised. The mark beside it is 56px now; an 11px
+   * wordmark next to a 56px mark reads as a caption to the logo rather than as
+   * part of it, and the lockup stops being one object. */
+  font: var(--text-overline);
+  font-size: 15px;
+  line-height: 20px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.topbar__rail-toggle {
+  flex: 0 0 auto;
+}
+
+/* The toggle is a desktop control. On mobile the sidebar is an overlay drawer
+ * and the rail state is meaningless, so showing a control that does nothing
+ * visible there is worse than omitting it. §6.2. */
+@media (max-width: 1023px) {
+  .topbar__rail-toggle {
+    display: none;
+  }
+
+  .topbar__brand-name {
+    display: none;
+  }
+}
+
+/* ---- Sidebar scroll container -------------------------------------------
+ * The nav is the scroll container, not the sidebar frame: the frame is inset and
+ * rounded, and a scrollbar on the frame would sit on the rounded corner and on
+ * the blur, which is where a scrollbar is most visible and least wanted. */
+
+.sidebar__scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.sidebar--collapsed .sidebar__scroll {
+  padding-inline: var(--space-2);
+}
+
+.sidebar__footer {
+  flex: 0 0 auto;
+  padding: var(--space-3);
+  border-top: 1px solid var(--frost-edge);
+}
+
+/* The signed-in identity. §6.1 reserves the footer for utility content, and
+ * this is the one thing that belongs in it: who is signed in, and how to leave.
+ * It is deliberately quiet — the header already carries the name in larger type,
+ * and repeating it here at the same weight would be noise. */
+.sidebar__identity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-2);
+  border-radius: var(--radius-control);
+}
+
+.sidebar__identity-name {
+  font: var(--text-body-small);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar__identity-role {
+  font: var(--text-overline);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+/* On the rail the identity collapses to its initial, which is the only part of
+ * it that fits in 84px without truncation. */
+.sidebar--collapsed .sidebar__identity-name,
+.sidebar--collapsed .sidebar__identity-role {
+  display: none;
+}
+
+.sidebar--collapsed .sidebar__identity {
+  justify-content: center;
 }

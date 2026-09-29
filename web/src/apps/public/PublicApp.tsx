@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 
 import { Badge, EmptyState, ErrorState, Skeleton, Status } from "../../components/feedback";
 import { Icon } from "../../lib/icons";
-import { Button, LinkButton, SearchField } from "../../components/controls";
+import { Button, LinkButton, SearchField, Select } from "../../components/controls";
 import { Pagination, PageHead, Tabs, TabLink } from "../../components/shell";
 import {
   Card,
@@ -19,7 +19,10 @@ import {
   Tr,
   Tag,
 } from "../../components/data";
-import { api, ApiError, type Project } from "../../lib/api";
+import { EventCard } from "../../components/cards";
+import { api, type Project } from "../../lib/api";
+import { useAsync } from "../../hooks/useAsync";
+import { useEvents } from "../../lib/events";
 import { useSession } from "../../lib/session";
 
 /** The server's page size. meta.page_size reports it, but the cap is the contract. */
@@ -36,19 +39,20 @@ const SEARCH_DEBOUNCE_MS = 300;
  * have to bolt on afterwards. Scores are not on this surface: results are hidden
  * until an organizer publishes them, which is a server-side decision the
  * response reflects rather than something this page decides.
+ *
+ * Every read goes through `useAsync` or `useEvents`, so every surface owes the
+ * viewer the same four answers — first load, failure with a retry, an explicit
+ * "there is nothing", and the data — and no surface can render two of them at
+ * once.
  */
 export function PublicApp() {
   const params = useParams();
-  const [search] = useSearchParams();
 
   // The route is declared `/events/*`, which yields the splat under "*" and
   // nothing else, so params.slug was always undefined and every event link fell
   // through to the directory. The first segment names the event and the rest is
   // the sub-route.
   const segments = (params["*"] ?? "").split("/").filter(Boolean);
-  const isGalleryRoute = segments[0] === "gallery";
-  const slug = isGalleryRoute ? "" : (segments[0] ?? "");
-  const view = search.get("view") ?? (isGalleryRoute ? "gallery" : segments[1] ?? "");
 
   // The project route is declared with a named parameter rather than a splat,
   // so it arrives here from the other branch. Every project card in the gallery
@@ -56,9 +60,41 @@ export function PublicApp() {
   // not-found from a page that looked perfectly healthy.
   if (params.projectID) return <ProjectApp projectID={params.projectID} />;
 
-  if (view === "gallery") return <GalleryApp eventSlug={slug} />;
-  if (slug) return <EventApp slug={slug} />;
-  return <EventDirectory />;
+  const [first, second] = segments;
+
+  // `/events/gallery` is the portal-wide gallery the sidebar links to. It names
+  // no event, so the gallery resolves one from the shared event list.
+  if (first === "gallery") {
+    return segments.length === 1 ? <GalleryApp eventSlug="" /> : <UnknownEventPage />;
+  }
+
+  if (!first) return <EventDirectory />;
+  if (segments.length === 1) return <EventApp slug={first} />;
+  if (segments.length === 2 && second === "gallery") return <GalleryApp eventSlug={first} />;
+
+  // `/events/slug/anything` used to fall through to the overview, so an old or
+  // mistyped link showed a healthy-looking page that answered nothing. design.md
+  // 12 asks for a clear state on every surface, and this is that state.
+  return <UnknownEventPage />;
+}
+
+function UnknownEventPage() {
+  return (
+    <EmptyState
+      title="No such page"
+      body="That address does not match a view of an event. The link may be from an older version of the portal, or the page may have moved."
+      icon="calendar"
+    />
+  );
+}
+
+/** The retry every failed read owes the viewer, worded the same way everywhere. */
+function RetryButton({ onRetry }: { onRetry: () => void }) {
+  return (
+    <Button variant="secondary" icon="refresh-cw" onClick={onRetry}>
+      Try again
+    </Button>
+  );
 }
 
 /**
@@ -69,32 +105,44 @@ export function PublicApp() {
  * offering it to anyone who read the URL.
  */
 function ProjectApp({ projectID }: { projectID: string }) {
-  const [project, setProject] = useState<Project | null>(null);
-  const [teamName, setTeamName] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const submission = useAsync(() => api.submission(projectID), [projectID]);
+  const project = submission.data?.data ?? null;
+  const teamName = submission.data?.team?.name ?? "";
+  const back = (
+    <LinkButton to="/events" variant="ghost" icon="chevron-left">
+      Back to events
+    </LinkButton>
+  );
 
-  useEffect(() => {
-    let live = true;
-    setLoading(true);
-    setError(null);
-    api
-      .submission(projectID)
-      .then((response) => {
-        if (!live) return;
-        setProject(response.data);
-        setTeamName(response.team?.name ?? "");
-      })
-      .catch((caught) => live && setError(describe(caught)))
-      .finally(() => live && setLoading(false));
-    return () => {
-      live = false;
-    };
-  }, [projectID]);
-
-  if (loading) return <Skeleton lines={6} />;
-  if (error) return <ErrorState title="That project could not be loaded" body={error} />;
-  if (!project) return null;
+  if (submission.error) {
+    return (
+      <ErrorState
+        title="That project could not be loaded"
+        body={submission.error}
+        retry={
+          <>
+            <RetryButton onRetry={submission.reload} />
+            {back}
+          </>
+        }
+      />
+    );
+  }
+  // Nothing has settled: an unset resource is the first attempt whether or not
+  // the loading flag has flipped yet, so the skeleton covers both.
+  if (!submission.data) return <Skeleton lines={6} />;
+  // A settled answer with no project in it. The old code returned null here,
+  // which left a blank page with no way back to the gallery.
+  if (!project) {
+    return (
+      <EmptyState
+        title="That project is not available"
+        body="It may have been removed since the page was loaded, or the link may be out of date."
+        icon="folder-kanban"
+        action={back}
+      />
+    );
+  }
 
   return (
     <section className="stack stack-5">
@@ -118,6 +166,7 @@ function ProjectApp({ projectID }: { projectID: string }) {
                 >
                   <Icon name="external-link" size={16} />
                   Repository
+                  <span className="visually-hidden">(opens in new tab)</span>
                 </a>
               ) : null}
               {project.live_url ? (
@@ -129,6 +178,7 @@ function ProjectApp({ projectID }: { projectID: string }) {
                 >
                   <Icon name="external-link" size={16} />
                   Live site
+                  <span className="visually-hidden">(opens in new tab)</span>
                 </a>
               ) : null}
             </div>
@@ -142,48 +192,15 @@ function ProjectApp({ projectID }: { projectID: string }) {
           </div>
         </CardBody>
       </Card>
-      <LinkButton to="/events" variant="ghost" icon="chevron-left">
-        Back to events
-      </LinkButton>
+      {back}
     </section>
   );
 }
 
-function RetryButton({ onRetry }: { onRetry: () => void }) {
-  return (
-    <Button variant="secondary" icon="refresh-cw" onClick={onRetry}>
-      Try again
-    </Button>
-  );
-}
-
 function EventDirectory() {
-  const [events, setEvents] = useState<Awaited<ReturnType<typeof api.events>>["data"] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [reload, setReload] = useState(0);
-
-  useEffect(() => {
-    let live = true;
-    setError(null);
-    api
-      .events()
-      .then((response) => live && setEvents(response.data))
-      .catch((caught) => live && setError(describe(caught)));
-    return () => {
-      live = false;
-    };
-  }, [reload]);
-
-  if (error) {
-    return (
-      <ErrorState
-        title="Events could not be loaded"
-        body={error}
-        retry={<RetryButton onRetry={() => setReload((value) => value + 1)} />}
-      />
-    );
-  }
-  if (!events) return <Skeleton lines={4} />;
+  // The event list is fetched once for the whole document, so the directory and
+  // the gallery's picker read the same request rather than issuing their own.
+  const { events, pending, error, empty, reload } = useEvents();
 
   return (
     <div className="stack stack-8">
@@ -191,7 +208,17 @@ function EventDirectory() {
         title="Events"
         lede="Every event on this portal, with its state, deadline and submission count."
       />
-      {events.length === 0 ? (
+      {/* Exactly one of the four: a failure with a retry, the first load, the
+          portal's own "none yet", or the list. */}
+      {error ? (
+        <ErrorState
+          title="Events could not be loaded"
+          body={error}
+          retry={<RetryButton onRetry={reload} />}
+        />
+      ) : pending ? (
+        <Skeleton lines={4} />
+      ) : empty ? (
         <EmptyState
           title="No events yet"
           body="Once an event is created it appears here with its submissions, panel and gallery."
@@ -200,30 +227,7 @@ function EventDirectory() {
       ) : (
         <div className="gallery-grid">
           {events.map((event) => (
-            <Card key={event.id} interactive>
-              <div className="cluster cluster-2">
-                {event.submissions_open ? (
-                  <Status icon="circle-check">Submissions open</Status>
-                ) : (
-                  <Status icon="lock" muted>
-                    Closed
-                  </Status>
-                )}
-                <Badge>{event.state}</Badge>
-              </div>
-              <CardTitle>{event.name}</CardTitle>
-              {event.summary ? <CardBody>{event.summary}</CardBody> : null}
-              <div className="project-card__meta">
-                <span className="table__meta">
-                  Closes {new Date(event.submissions_close).toLocaleDateString()}
-                </span>
-              </div>
-              <CardActions>
-                <LinkButton to={`/events/${event.slug}`} variant="secondary" icon="arrow-right">
-                  Open
-                </LinkButton>
-              </CardActions>
-            </Card>
+            <EventCard key={event.id} event={event} />
           ))}
         </div>
       )}
@@ -232,39 +236,25 @@ function EventDirectory() {
 }
 
 function EventApp({ slug }: { slug: string }) {
-  const [loaded, setLoaded] = useState<Awaited<ReturnType<typeof api.event>> | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [reload, setReload] = useState(0);
+  const loaded = useAsync(() => api.event(slug), [slug]);
 
-  useEffect(() => {
-    let live = true;
-    setError(null);
-    api
-      .event(slug)
-      .then((response) => live && setLoaded(response))
-      .catch((caught) => live && setError(describe(caught)));
-    return () => {
-      live = false;
-    };
-  }, [slug, reload]);
-
-  if (error) {
+  if (loaded.error) {
     return (
       <ErrorState
         title="That event could not be loaded"
-        body={error}
-        retry={<RetryButton onRetry={() => setReload((value) => value + 1)} />}
+        body={loaded.error}
+        retry={<RetryButton onRetry={loaded.reload} />}
       />
     );
   }
-  if (!loaded) return <Skeleton lines={5} />;
+  if (!loaded.data) return <Skeleton lines={5} />;
 
   // The related collections are siblings of `data`, not fields inside it. Reading
   // event.tracks found nothing, and the count below threw on the first line.
-  const event = loaded.data;
-  const tracks = loaded.tracks;
-  const prizes = loaded.prizes;
-  const milestones = loaded.milestones;
+  const event = loaded.data.data;
+  const tracks = loaded.data.tracks;
+  const prizes = loaded.data.prizes;
+  const milestones = loaded.data.milestones;
 
   return (
     <div className="stack stack-8">
@@ -281,7 +271,6 @@ function EventApp({ slug }: { slug: string }) {
       <Tabs>
         <TabLink to={`/events/${slug}`} label="Overview" active icon="file-text" />
         <TabLink to={`/events/${slug}/gallery`} label="Gallery" active={false} icon="folder-kanban" />
-        <TabLink to={`/events/${slug}?view=results`} label="Results" active={false} icon="trophy" />
       </Tabs>
 
       <div className="grid">
@@ -304,22 +293,28 @@ function EventApp({ slug }: { slug: string }) {
               <DescriptionTerm>Submissions</DescriptionTerm>
               <DescriptionValue>
                 {event.submissions_open ? "Open" : "Closed"} ·{" "}
-                {new Date(event.submissions_close).toLocaleDateString()}
+                <time dateTime={event.submissions_close}>
+                  {new Date(event.submissions_close).toLocaleDateString()}
+                </time>
               </DescriptionValue>
               <DescriptionTerm>Tracks</DescriptionTerm>
               <DescriptionValue>{tracks.length}</DescriptionValue>
               <DescriptionTerm>Prizes</DescriptionTerm>
               <DescriptionValue>{prizes.length}</DescriptionValue>
               <DescriptionTerm>Judges</DescriptionTerm>
-              <DescriptionValue>{loaded.judge_count}</DescriptionValue>
+              <DescriptionValue>{loaded.data.judge_count}</DescriptionValue>
             </DescriptionList>
           </Card>
         </div>
       </div>
 
+      {/* Each of the three states below stands in for its section rather than
+          disappearing: a viewer who sees nothing cannot tell "no prizes" from
+          "prizes further down the page", which is what design.md 12 means by a
+          clear empty state. */}
       {tracks.length > 0 ? (
         <section className="stack stack-4">
-          <h3 className="card__title">Tracks</h3>
+          <CardTitle>Tracks</CardTitle>
           <div className="cluster">
             {tracks.map((track) => (
               <Badge key={track.id} icon="route">
@@ -328,11 +323,17 @@ function EventApp({ slug }: { slug: string }) {
             ))}
           </div>
         </section>
-      ) : null}
+      ) : (
+        <EmptyState
+          title="No tracks yet"
+          body="Submissions are grouped by track when the event defines them. This one has none listed."
+          icon="route"
+        />
+      )}
 
       {milestones.length > 0 ? (
         <section className="stack stack-4">
-          <h3 className="card__title">Schedule</h3>
+          <CardTitle>Schedule</CardTitle>
           <Table caption="The milestones that define the event's shape.">
             <thead>
               <tr>
@@ -344,21 +345,33 @@ function EventApp({ slug }: { slug: string }) {
             <tbody>
               {milestones.map((milestone) => (
                 <Tr key={milestone.id}>
-                  <Td strong>{milestone.title}</Td>
+                  <Th scope="row">{milestone.title}</Th>
                   <Td meta>{milestone.detail ?? "—"}</Td>
                   <Td numeric>
-                    {milestone.due_at ? new Date(milestone.due_at).toLocaleDateString() : "—"}
+                    {milestone.due_at ? (
+                      <time dateTime={milestone.due_at}>
+                        {new Date(milestone.due_at).toLocaleDateString()}
+                      </time>
+                    ) : (
+                      "—"
+                    )}
                   </Td>
                 </Tr>
               ))}
             </tbody>
           </Table>
         </section>
-      ) : null}
+      ) : (
+        <EmptyState
+          title="No schedule yet"
+          body="Milestones appear here once the organizers set the dates that shape the event."
+          icon="calendar"
+        />
+      )}
 
       {prizes.length > 0 ? (
         <section className="stack stack-4">
-          <h3 className="card__title">Prizes</h3>
+          <CardTitle>Prizes</CardTitle>
           <Table caption="What the panel is awarding.">
             <thead>
               <tr>
@@ -370,7 +383,7 @@ function EventApp({ slug }: { slug: string }) {
             <tbody>
               {prizes.map((prize) => (
                 <Tr key={prize.id}>
-                  <Td strong>{prize.name}</Td>
+                  <Th scope="row">{prize.name}</Th>
                   <Td meta>{prize.description || "—"}</Td>
                   <Td numeric>{ordinal(prize.rank)}</Td>
                 </Tr>
@@ -378,7 +391,13 @@ function EventApp({ slug }: { slug: string }) {
             </tbody>
           </Table>
         </section>
-      ) : null}
+      ) : (
+        <EmptyState
+          title="No prizes yet"
+          body="The panel's awards are listed here once the event publishes them."
+          icon="trophy"
+        />
+      )}
     </div>
   );
 }
@@ -395,20 +414,14 @@ function EventApp({ slug }: { slug: string }) {
 function GalleryApp({ eventSlug }: { eventSlug: string }) {
   const session = useSession();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [events, setEvents] = useState<Awaited<ReturnType<typeof api.events>>["data"]>([]);
-  const [projects, setProjects] = useState<Project[] | null>(null);
-  const [meta, setMeta] = useState<{ page: number; page_size: number; total: number } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [eventsError, setEventsError] = useState<string | null>(null);
-  const [eventsPending, setEventsPending] = useState(true);
-  const [reload, setReload] = useState(0);
+  const eventList = useEvents();
 
   const query = searchParams.get("q") ?? "";
   // The route's own event beats the portal's first event, so a gallery reached
   // from an event page shows that event rather than whichever sorts first. `||`
   // rather than `??`, because /events/gallery names no event and an empty string
   // is a value here, not an absent one.
-  const eventSlugParam = searchParams.get("event") || eventSlug || events[0]?.slug || "";
+  const eventSlugParam = searchParams.get("event") || eventSlug || eventList.events[0]?.slug || "";
   const track = searchParams.get("track") ?? "";
   const page = Math.max(1, Number(searchParams.get("page") ?? "1") || 1);
 
@@ -416,26 +429,13 @@ function GalleryApp({ eventSlug }: { eventSlug: string }) {
   // the server chase the typist and fills the back button with half-typed queries.
   const [typed, setTyped] = useState(query);
 
+  // The address is the source of truth, so the field follows it whenever
+  // something else writes the query — Back, a shared link, "Clear filters". The
+  // debounce below only ever *applies* typed; without this re-sync it also
+  // re-applied it, overwriting the query that Back had just restored.
   useEffect(() => {
-    let live = true;
-    setEventsError(null);
-    setEventsPending(true);
-    api
-      .events()
-      .then((response) => {
-        if (!live) return;
-        setEvents(response.data);
-        setEventsPending(false);
-      })
-      .catch((caught) => {
-        if (!live) return;
-        setEventsError(describe(caught));
-        setEventsPending(false);
-      });
-    return () => {
-      live = false;
-    };
-  }, [reload]);
+    setTyped(query);
+  }, [query]);
 
   useEffect(() => {
     if (typed === query) return;
@@ -454,28 +454,21 @@ function GalleryApp({ eventSlug }: { eventSlug: string }) {
     return () => clearTimeout(timer);
   }, [typed, query, setSearchParams]);
 
-  useEffect(() => {
-    if (!eventSlugParam) return;
-    let live = true;
-    setProjects(null);
-    setMeta(null);
-    setError(null);
-    api
-      .projects(eventSlugParam, {
+  // The data is retained across a page or filter change, so the results block —
+  // including the pagination control the viewer is standing on — keeps its
+  // mounted instance and its focus instead of unmounting on every refetch.
+  const projects = useAsync(
+    () =>
+      api.projects(eventSlugParam, {
         ...(query ? { q: query } : {}),
         ...(track ? { track } : {}),
         page,
-      })
-      .then((response) => {
-        if (!live) return;
-        setProjects(response.data);
-        setMeta(response.meta);
-      })
-      .catch((caught) => live && setError(describe(caught)));
-    return () => {
-      live = false;
-    };
-  }, [eventSlugParam, track, query, page, reload]);
+      }),
+    [eventSlugParam, query, track, page],
+    // With no event named there is nothing to ask for, and the answer would be
+    // an error where the truth is "this portal has no events yet".
+    { enabled: Boolean(eventSlugParam) },
+  );
 
   function apply(next: Record<string, string | number | undefined>) {
     setSearchParams(
@@ -491,9 +484,105 @@ function GalleryApp({ eventSlug }: { eventSlug: string }) {
     );
   }
 
-  const pageSize = meta?.page_size ?? PAGE_SIZE;
-  const total = meta?.total ?? projects?.length ?? 0;
-  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  // The picker is a real labelled control, and it always has an option that
+  // matches the value it holds — including the moment before the list arrives.
+  const eventOptions = eventList.events.map((event) => ({
+    value: event.slug,
+    label: event.name,
+  }));
+  if (!eventOptions.some((option) => option.value === eventSlugParam)) {
+    eventOptions.unshift({
+      value: eventSlugParam,
+      label: eventSlugParam || (eventList.pending ? "Loading events" : "No events"),
+    });
+  }
+
+  // The results region answers with exactly one state. `projects.data` being
+  // non-null means a request has succeeded, so a refresh keeps the current grid
+  // (and the focus inside it) on screen rather than replacing it with a
+  // skeleton, and the first load is the only time a skeleton appears here.
+  let results: ReactNode;
+  if (!eventSlugParam) {
+    // No event to browse: the event list decides, and only one of its three
+    // answers renders — never a skeleton beside the "no events" empty state.
+    if (eventList.error) {
+      results = (
+        <ErrorState
+          title="The event list could not be loaded"
+          body={eventList.error}
+          retry={<RetryButton onRetry={eventList.reload} />}
+        />
+      );
+    } else if (eventList.pending) {
+      results = <Skeleton lines={4} />;
+    } else {
+      results = (
+        <EmptyState
+          title="There are no events to browse"
+          body="A gallery belongs to an event, and this portal has none yet. Once one is created its projects appear here."
+          icon="calendar"
+        />
+      );
+    }
+  } else if (projects.error) {
+    results = (
+      <ErrorState
+        title="The gallery could not be loaded"
+        body={projects.error}
+        retry={<RetryButton onRetry={projects.reload} />}
+      />
+    );
+  } else if (!projects.data) {
+    results = <Skeleton lines={4} />;
+  } else if (projects.data.data.length === 0) {
+    results = (
+      <EmptyState
+        title="No projects match"
+        body="Nothing has been submitted under those filters. Clearing the search shows everything."
+        icon="folder-kanban"
+        action={
+          <Button
+            variant="secondary"
+            icon="x"
+            onClick={() => {
+              setTyped("");
+              setSearchParams(new URLSearchParams(), { replace: true });
+            }}
+          >
+            Clear filters
+          </Button>
+        }
+      />
+    );
+  } else {
+    const list = projects.data.data;
+    const total = projects.data.meta.total;
+    const pageSize = projects.data.meta.page_size || PAGE_SIZE;
+    const pageCount = Math.max(1, Math.ceil(total / pageSize));
+    results = (
+      <>
+        {/* A live region: the count is the one thing that changes when a page
+            or a search changes, so a screen reader hears that the results moved
+            instead of being left on the previous set. */}
+        <p className="table__meta" role="status">
+          {total === 1 ? "1 project" : `${total} projects`}
+          {total > pageSize
+            ? ` · showing ${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, total)}`
+            : null}
+        </p>
+        <div className="gallery-grid">
+          {list.map((project) => (
+            <ProjectCard key={project.id} project={project} signedIn={Boolean(session.user)} />
+          ))}
+        </div>
+        <Pagination
+          page={page}
+          pageCount={pageCount}
+          onPage={(next) => apply({ page: next > 1 ? next : undefined })}
+        />
+      </>
+    );
+  }
 
   return (
     <div className="stack stack-6">
@@ -510,96 +599,38 @@ function GalleryApp({ eventSlug }: { eventSlug: string }) {
           onChange={setTyped}
           placeholder="Title, summary or tag"
         />
-        <label className="field">
-          <span className="field__label">Event</span>
-          <select
-            className="select"
-            value={eventSlugParam}
-            onChange={(event) => apply({ event: event.target.value, page: undefined })}
-          >
-            {events.length === 0 ? (
-              <option value={eventSlugParam}>{eventSlugParam || "No events"}</option>
-            ) : null}
-            {events.map((event) => (
-              <option key={event.id} value={event.slug}>
-                {event.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        <Select
+          id="gallery-event"
+          label="Event"
+          value={eventSlugParam}
+          onChange={(value) => apply({ event: value, page: undefined })}
+          options={eventOptions}
+        />
       </div>
 
-      {eventsError ? (
+      {/* The picker reads the same list as the results. When an event is named
+          by the route the gallery still loads, and the picker's own failure is
+          reported rather than leaving a select with no options to explain it. */}
+      {eventSlugParam && eventList.error ? (
         <ErrorState
           title="The event list could not be loaded"
-          body={eventsError}
-          retry={<RetryButton onRetry={() => setReload((value) => value + 1)} />}
-        />
-      ) : null}
-      {error ? (
-        <ErrorState
-          title="The gallery could not be loaded"
-          body={error}
-          retry={<RetryButton onRetry={() => setReload((value) => value + 1)} />}
-        />
-      ) : null}
-      {!projects && !error && !eventsError ? <Skeleton lines={4} /> : null}
-
-      {!eventSlugParam && !eventsError && !eventsPending && !projects ? (
-        <EmptyState
-          title="There are no events to browse"
-          body="A gallery belongs to an event, and this portal has none yet. Once one is created its projects appear here."
-          icon="calendar"
+          body={eventList.error}
+          retry={<RetryButton onRetry={eventList.reload} />}
         />
       ) : null}
 
-      {projects && projects.length === 0 ? (
-        <EmptyState
-          title="No projects match"
-          body="Nothing has been submitted under those filters. Clearing the search shows everything."
-          icon="folder-kanban"
-          action={
-            <Button
-              variant="secondary"
-              icon="x"
-              onClick={() => {
-                setTyped("");
-                setSearchParams(new URLSearchParams(), { replace: true });
-              }}
-            >
-              Clear filters
-            </Button>
-          }
-        />
-      ) : null}
-
-      {projects && projects.length > 0 ? (
-        <>
-          <p className="table__meta">
-            {total === 1 ? "1 project" : `${total} projects`}
-            {total > pageSize
-              ? ` · showing ${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, total)}`
-              : null}
-          </p>
-          <div className="gallery-grid">
-            {projects.map((project) => (
-              <ProjectCard key={project.id} project={project} signedIn={Boolean(session.user)} />
-            ))}
-          </div>
-          <Pagination
-            page={page}
-            pageCount={pageCount}
-            onPage={(next) => apply({ page: next > 1 ? next : undefined })}
-          />
-        </>
-      ) : null}
+      {results}
     </div>
   );
 }
 
 function ProjectCard({ project, signedIn }: { project: Project; signedIn: boolean }) {
   return (
-    <Card interactive>
+    // A card that only *looks* clickable must have something to click. When the
+    // viewer is signed out there is no link at all — the project route belongs
+    // to a signed-in visitor — so the hover affordance is dropped rather than
+    // promising a destination the keyboard cannot reach.
+    <Card interactive={signedIn}>
       <div className="cluster cluster-2">
         {/* design.md 10.3: the outcome is words and a glyph, never a colour.
             The project list carries a track id, not a track name, and no rank:
@@ -638,9 +669,4 @@ function ProjectCard({ project, signedIn }: { project: Project; signedIn: boolea
 function ordinal(n: number): string {
   const suffix = n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] ?? "th";
   return `${n}${suffix}`;
-}
-
-function describe(caught: unknown): string {
-  if (caught instanceof ApiError) return caught.message;
-  return "The portal could not be reached.";
 }

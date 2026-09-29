@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 
 import { IconButton } from "./controls";
 import { Icon, type IconName } from "../lib/icons";
@@ -13,8 +14,24 @@ import { Icon, type IconName } from "../lib/icons";
  * The drawer traps focus while open, closes on Escape, and returns focus to the
  * trigger that opened it. That is 6.2 behaviour, and a portal that a judge uses
  * on a phone in a venue is exactly where a focus-trapping dialog earns its keep.
+ *
+ * Every navigational element here is a react-router `Link`, never a bare `<a>`.
+ * A bare anchor on a client-side route is a full document load: it drops the
+ * state the viewer had, re-fires every request the page had settled, and leaves
+ * the browser tab title unchanged — so the sidebar and the tab strip looked
+ * like part of an app while behaving like a server-rendered site, next to
+ * buttons that really did navigate in place.
  */
 
+/**
+ * One item of navigation.
+ *
+ * The application map in `lib/navigation.ts` extends this with the roles a
+ * group is *offered* to; the shell only ever needs the destination, which is
+ * why the roles live with the map rather than here. Having one definition of
+ * the item is what removes the `as NavGroup` casts that used to sit between
+ * the two files.
+ */
 export interface NavItem {
   label: string;
   to: string;
@@ -54,9 +71,9 @@ export function NavGroupView({
           const current = isCurrent(item);
           return (
             <li key={item.to}>
-              <a
+              <Link
                 className={current ? "nav-item nav-item--active" : "nav-item"}
-                href={item.to}
+                to={item.to}
                 aria-current={current ? "page" : undefined}
                 onClick={onNavigate}
               >
@@ -64,7 +81,7 @@ export function NavGroupView({
                   <Icon name={item.icon} size={20} />
                 </span>
                 <span className="nav-item__label">{item.label}</span>
-              </a>
+              </Link>
             </li>
           );
         })}
@@ -79,13 +96,13 @@ export function SidebarBrand({ collapsed = false }: { collapsed?: boolean }) {
   // The collapsed 84px slot gets the mark, because a wordmark does not fit and
   // shrinking it would make it illegible rather than compact.
   return (
-    <a className="sidebar-brand" href="/dashboard">
+    <Link className="sidebar-brand" to="/dashboard">
       {collapsed ? (
         <img className="sidebar-brand__mark" src="/brand/icon.svg" alt="CodeCeremony" width={28} height={28} />
       ) : (
         <img className="sidebar-brand__lockup" src="/brand/logo.svg" alt="CodeCeremony" height={24} />
       )}
-    </a>
+    </Link>
   );
 }
 
@@ -95,6 +112,8 @@ export function TopBar({
   title,
   actions,
   onOpenDrawer,
+  onToggleRail,
+  railCollapsed = true,
   signedIn,
   displayName,
   role,
@@ -104,6 +123,9 @@ export function TopBar({
   title: string;
   actions?: ReactNode;
   onOpenDrawer: () => void;
+  /** Expands the rail between its collapsed and full widths. */
+  onToggleRail?: () => void;
+  railCollapsed?: boolean;
   signedIn: boolean;
   displayName?: string;
   role?: string;
@@ -117,30 +139,62 @@ export function TopBar({
         // §6.3 allows a navigation trigger in the top bar and nothing else, and
         // forbids a second navigation system: the stylesheet hides this on every
         // width where the sidebar is persistent, so it is a mobile affordance
-        // only. The class is the one shell.css already keys that on.
+        // only.
         className="topbar__nav-trigger"
         onClick={onOpenDrawer}
       />
+
+      {/* The rail toggle. The sidebar is a persistent rail on desktop, and this
+          is what expands it to its full width. It is a layout control, not a
+          navigation control, which is why it is the one thing in the header
+          ahead of the page context. */}
+      <IconButton
+        icon="panel-left"
+        label={railCollapsed ? "Expand the navigation rail" : "Collapse the navigation rail"}
+        className="topbar__rail-toggle"
+        onClick={onToggleRail}
+        aria-pressed={!railCollapsed}
+      />
+
+      {/* The lockup lives in the header now. When the sidebar was a grid column
+          the brand had a cell of its own above it; as a floating rail there is
+          nothing above it, and a brand mark floating in a corner of a rounded
+          panel is the one thing that makes the chrome look assembled rather than
+          designed. §6.1 asks for the lockup at the top with clear space, and the
+          header is now the top. */}
+      <Link className="topbar__brand" to="/dashboard">
+        <img src="/brand/icon.svg" alt="" width={56} height={56} />
+        <span className="topbar__brand-name">CodeCeremony</span>
+      </Link>
+
+      <div className="topbar__divider" />
+
       <div className="topbar__context">
         {breadcrumb ? <div className="topbar__crumb">{breadcrumb}</div> : null}
         <h1 className="topbar__title">{title}</h1>
       </div>
+
       <div className="topbar__spacer" />
+
       <div className="topbar__actions">
-        {actions}
+        {actions ? (
+          <>
+            {actions}
+            <div className="topbar__divider" />
+          </>
+        ) : null}
         {signedIn ? (
           <div className="topbar__account">
-            <span className="topbar__account-name">{displayName}</span>
-            <span className="topbar__account-role">{role}</span>
-            <button type="button" className="btn btn--ghost" onClick={onSignOut}>
-              <Icon name="log-out" size={16} />
-              Sign out
-            </button>
+            <span className="topbar__identity">
+              <span className="topbar__account-name">{displayName}</span>
+              <span className="topbar__account-role">{role}</span>
+            </span>
+            <IconButton icon="log-out" label="Sign out" onClick={onSignOut} />
           </div>
         ) : (
-          <a className="btn btn--primary" href="/login">
+          <Link className="btn btn--primary" to="/login">
             Sign in
-          </a>
+          </Link>
         )}
       </div>
     </header>
@@ -148,16 +202,16 @@ export function TopBar({
 }
 
 /** design.md 7.2. */
-export function Breadcrumbs({ items }: { items: { label: string; href?: string }[] }) {
+export function Breadcrumbs({ items }: { items: { label: string; to?: string }[] }) {
   return (
     <nav className="breadcrumbs" aria-label="Breadcrumb">
       <ol className="breadcrumbs__list">
         {items.map((item, index) => (
           <li key={`${item.label}-${index}`} className="breadcrumbs__item">
-            {item.href ? (
-              <a href={item.href} className="breadcrumbs__link">
+            {item.to ? (
+              <Link to={item.to} className="breadcrumbs__link">
                 {item.label}
-              </a>
+              </Link>
             ) : (
               <span aria-current="page" className="breadcrumbs__current">
                 {item.label}
@@ -187,14 +241,22 @@ export function NavDrawer({
 }) {
   const panel = useRef<HTMLDivElement>(null);
   const trigger = useRef<Element | null>(null);
+  // The caller's close handler is read through a ref so the effect below runs
+  // when `open` changes and on no other render. A fresh arrow from the caller
+  // used to be in the dependency array, so every parent re-render re-ran the
+  // effect: it re-captured `document.activeElement` from wherever focus was at
+  // that moment and pushed focus back to the first control in the drawer,
+  // pulling it out of whatever the viewer was operating.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
 
   useEffect(() => {
-    trigger.current = document.activeElement;
     if (!open) return;
+    trigger.current = document.activeElement;
 
     function onKey(event: KeyboardEvent) {
       if (event.key === "Escape") {
-        onClose();
+        closeRef.current();
         return;
       }
       // Tab is wrapped so focus cannot leave the drawer and land on the page
@@ -223,7 +285,7 @@ export function NavDrawer({
       // Focus returns to whatever opened the drawer, per 6.2.
       (trigger.current as HTMLElement | null)?.focus();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 
@@ -238,7 +300,7 @@ export function NavDrawer({
         aria-label="Navigation"
       >
         <div className="drawer__head">
-          <img className="sidebar-brand__lockup" src="/brand/logo.svg" alt="CodeCeremony" height={22} />
+          <img className="sidebar-brand__lockup" src="/brand/logo.svg" alt="CodeCeremony" height={44} />
           <IconButton icon="x" label="Close navigation" onClick={onClose} />
         </div>
         <div className="drawer__body">
@@ -288,15 +350,28 @@ export function TabLink({
   icon?: IconName;
 }) {
   return (
-    <a className={active ? "tab tab--active" : "tab"} href={to} aria-current={active ? "page" : undefined}>
+    <Link
+      className={active ? "tab tab--active" : "tab"}
+      to={to}
+      aria-current={active ? "page" : undefined}
+    >
       {icon ? <Icon name={icon} size={16} /> : null}
       {label}
-    </a>
+    </Link>
   );
 }
 
-export function Tabs({ children }: { children: ReactNode }) {
-  return <nav className="tabs">{children}</nav>;
+/**
+ * The tab strip. It carries a label because several labelled landmarks already
+ * exist on a page — sidebar, pagination, breadcrumbs — and a `<nav>` with no
+ * name is a landmark a screen reader can only enumerate as "navigation".
+ */
+export function Tabs({ children, label = "Sections" }: { children: ReactNode; label?: string }) {
+  return (
+    <nav className="tabs" aria-label={label}>
+      {children}
+    </nav>
+  );
 }
 
 /** design.md 7.2. Pages are known, so paging is explicit rather than a scroller. */
@@ -332,5 +407,73 @@ export function Pagination({
         Next
       </button>
     </nav>
+  );
+}
+
+/**
+ * The header for the two surfaces that sit outside the application shell: the
+ * landing page at `/` and the sign-in page.
+ *
+ * It exists because those pages had no way in. The shell's top bar carries the
+ * only "Sign in" control in the product, and `/` deliberately renders without a
+ * shell, so a first-time visitor to the portal — or a signed-in person who had
+ * bookmarked the gallery — reached a page with no sign-in, no dashboard and no
+ * navigation of any kind, in 646 lines of otherwise complete public UI.
+ *
+ * `heading` decides whether the lockup is the document's `<h1>`. The sign-in
+ * page owns its own heading ("Sign in to your portal"), so it passes false and
+ * avoids two competing top-level headings on one screen.
+ */
+export function PublicHeader({
+  signedIn,
+  displayName,
+  role,
+  onSignOut,
+  heading = true,
+}: {
+  signedIn: boolean;
+  displayName?: string;
+  role?: string;
+  onSignOut: () => void;
+  heading?: boolean;
+}) {
+  const lockup = (
+    <img className="public-header__logo" src="/brand/logo.svg" alt="CodeCeremony" height={30} />
+  );
+  return (
+    <header className="public-header">
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
+      {heading ? (
+        <h1 className="public-header__brand">{lockup}</h1>
+      ) : (
+        <span className="public-header__brand">{lockup}</span>
+      )}
+      <nav className="public-header__nav" aria-label="Primary">
+        <Link className="public-header__link" to="/events">
+          All events
+        </Link>
+        <Link className="public-header__link" to="/events/gallery">
+          Gallery
+        </Link>
+      </nav>
+      <div className="public-header__actions">
+        {signedIn ? (
+          <>
+            <span className="topbar__account-name">{displayName}</span>
+            <span className="topbar__account-role">{role}</span>
+            <button type="button" className="btn btn--ghost" onClick={onSignOut}>
+              <Icon name="log-out" size={16} />
+              Sign out
+            </button>
+          </>
+        ) : (
+          <Link className="btn btn--primary" to="/login">
+            Sign in
+          </Link>
+        )}
+      </div>
+    </header>
   );
 }

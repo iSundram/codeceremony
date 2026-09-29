@@ -64,8 +64,9 @@ Do not use:
 - dark theme colors in the first release;
 - neon colors;
 - rainbow gradients;
-- excessive glassmorphism;
-- blurry glow effects behind text;
+- glassmorphism used for decoration rather than for depth;
+- blurry glow effects behind text; a canvas wash is permitted only where no text
+  sits on it (§3.7);
 - more than one dominant gradient at a time;
 - arbitrary emoji as interface icons;
 - mixed icon families;
@@ -112,23 +113,32 @@ the alternative is a logo that is not the logo.
 
 | Semantic token | Value | Usage |
 |---|---|---|
-| `color.canvas` | `mist` | Page background |
-| `color.surface` | `mist` | Primary card and panel surface |
-| `color.surface-muted` | `accent-periwinkle` at 18% over `mist` | Quiet panels and secondary regions |
-| `color.surface-raised` | `mist` with approved border and shadow | Raised cards and focused containers |
-| `color.surface-warm` | `warm-gray` at 16% over `mist` | Warm neutral panel; use sparingly |
+| `color.canvas` | `white` | Page background |
+| `color.surface` | `white` | Primary card and panel surface |
+| `color.surface-muted` | `accent-periwinkle` at ~8% over `white` | Quiet panels and secondary regions |
+| `color.surface-raised` | `white` with approved border and shadow | Raised cards and focused containers |
+| `color.surface-warm` | `warm-gray` at ~10% over `white` | Warm neutral panel; use sparingly |
 | `color.text-primary` | `ink` | Headings, body copy, high-priority values |
 | `color.text-secondary` | `navy` | Supporting copy, labels, navigation |
-| `color.text-muted` | `navy` at 72% | Nonessential metadata, never used for critical instructions |
+| `color.text-muted` | `#5A6A8C` | Nonessential metadata, never used for critical instructions |
 | `color.text-disabled` | `warm-gray` | Disabled controls only |
 | `color.text-on-dark` | `mist` | Text on `navy` or other deep approved surfaces |
-| `color.border` | `accent-periwinkle` | Standard borders and dividers |
+| `color.border` | `navy` at 16% | Standard borders and dividers |
 | `color.border-strong` | `navy` | Focus-adjacent or high-emphasis borders |
 | `color.accent` | `accent-blue` | Active state, progress, selected state, primary emphasis |
-| `color.accent-soft` | `accent-periwinkle` | Soft accent fill and decorative gradient partner |
+| `color.accent-soft` | `accent-periwinkle` at 28% over `white` | Soft accent fill and decorative gradient partner |
 | `color.focus` | `navy` | Keyboard focus ring |
-| `color.overlay` | `navy` at 24% | Modal and drawer backdrop |
+| `color.overlay` | `navy` at 16% | Modal and drawer backdrop |
 | `color.shadow` | `navy` at approved alpha levels | Depth and elevation |
+
+**Surfaces are white; the palette is accents on top of them.** `mist` was
+previously both the canvas and the surface, which put a blue cast on every card,
+table and panel at once and left the brand colour nothing to be an accent
+*against* — a theme where the base colour and the brand colour are the same
+colour reads as one wash. White surfaces let `navy`, `accent-blue` and
+`accent-periwinkle` do the small work they are for: a rail, an icon, a badge, a
+hairline. All border and overlay values are alpha of an approved colour per
+§1.2, never a new hue. §14, light only.
 
 ### 3.3 Accent usage
 
@@ -187,6 +197,48 @@ Gradient rules:
 - Do not add radial, conic, mesh, or multicolor gradients without a new design decision.
 - Do not use a gradient as a full-page background behind dense content.
 
+**`gradient.folded`** is added for the primary action. The three existing recipes
+run 135°, which on a wide control reads as a flat band; the folded recipe runs
+165° and moves through four stops, so a button or a brand panel has a direction
+and a top edge rather than one colour with a hint of another.
+
+| Token | Recipe | Use |
+|---|---|---|
+| `gradient.folded` | `linear-gradient(165deg, #48547C 0%, #33343B 52%, #48547C 100%)` | The primary action, and the brand panel on the sign-in surface |
+
+**Why the ramp goes dark and then lightens again.** A primary button carries a
+label, and the label has to be legible across the whole sweep, not at one end of
+it. Measured across the approved palette, no label colour survives a light-to-dark
+ramp: `mist` on `periwinkle` is **1.85:1** and on `accent-blue` is **2.20:1**,
+while `ink` on `navy` is **1.67:1**. Any recipe that travels through the light
+tones therefore has an unreadable patch in it, and the patch moves with the
+gradient angle, so it cannot be fixed by choosing a different label.
+
+So the ramp uses only `navy` and `ink`, which darkens through the middle and lifts
+at the trailing edge: the colour of a folded card catching light on its far
+side. `mist` on it measures **5.80:1 at its lightest and 9.70:1 at its
+darkest**, so the label passes AA everywhere on the surface with no
+angle-dependent patch. The fold highlight is carried by the inset edge in
+`shadow.folded` rather than by a third colour, which is what keeps the ramp
+honest.
+
+A consequence worth stating: a filled primary action is a dark surface. `mist` on
+`mist` is 1.00:1, so the label is `mist` and the button is never a light
+surface carrying a dark label. Tinted buttons use `color.surface` with `ink`, per
+§8.1.
+
+A fifth recipe is approved for the page canvas only:
+
+| Token | Recipe | Use |
+|---|---|---|
+| `canvas.wash` | `radial-gradient(at 12% -10%, rgba(146,170,209,0.30) 0px, transparent 55%), radial-gradient(at 92% 4%, rgba(201,220,234,0.55) 0px, transparent 50%)` | The `body` background, behind the opaque content panel |
+
+This is the single place a radial gradient is allowed, and it is allowed because
+of what it is *behind*. The canvas carries no text of its own: the content panel
+is opaque and inset above it, so no glyph ever renders on a soft radial edge. The
+rule is not "gradients on the canvas are fine" — it is "the canvas may carry
+colour because nothing is read from it".
+
 ### 3.6 Borders and shadows
 
 Borders:
@@ -204,7 +256,62 @@ Approved elevation levels:
 | `shadow.1` | `0 8px 24px rgba(72, 84, 124, 0.10)` | Cards and dropdown surfaces |
 | `shadow.2` | `0 20px 50px rgba(72, 84, 124, 0.14)` | Drawers, modals, and major overlays |
 
-Do not add glow shadows, black shadows, multiple shadows, or arbitrary blur values.
+Do not add glow shadows, black shadows, or arbitrary blur values.
+
+**One exception, and it is the reason frosted surfaces read as glass rather than
+as a pale rectangle.** A translucent surface has no edge of its own: without a
+highlight along the top inner edge it looks like a hole where a panel should be.
+So a frosted surface carries two shadows and no more:
+
+| Token | Value | Use |
+|---|---|---|
+| `shadow.folded` | `inset 0 1px 0 rgba(255,255,255,0.55), 0 1px 2px rgba(72,84,124,0.06), 0 12px 32px rgba(72,84,124,0.10)` | Frosted panels: the top bar, the sidebar, the content panel, dropdowns |
+| `shadow.lifted` | `inset 0 1px 0 rgba(255,255,255,0.65), 0 2px 4px rgba(72,84,124,0.08), 0 24px 56px rgba(72,84,124,0.16)` | Overlays above frosted surfaces: modals, drawers, menus |
+
+The first component is the highlight and is what the exception is really about.
+The two drop shadows are a tighter pair plus a wider one, which is the ordinary
+way to say "this is above something" and is not a glow: there is no coloured or
+blurred halo, and the alpha never exceeds 0.16. Two shadows remain the ceiling on
+any surface; a third is a new design decision.
+
+`shadow.brand` is added for a brand-coloured control that must read as pressed
+on hover. It is navy-tinted rather than a coloured glow, and it is only ever
+applied to a surface that already carries `gradient.folded`:
+
+| Token | Value | Use |
+|---|---|---|
+| `shadow.brand` | `0 12px 28px -10px rgba(72,84,124,0.38)` | Primary action hover, brand panel |
+
+### 3.7 Frosted surfaces
+
+The document previously banned glassmorphism outright. That was protecting
+something real — a blurred backdrop destroys text contrast, because the value
+under the text changes with whatever scrolls past it — and the rule has been
+rewritten to protect that thing directly instead of banning the technique.
+
+A **frosted surface** is one that meets all four of these:
+
+1. `backdrop-filter: blur(16px) saturate(140%)` over a surface tint of at least
+   72% opacity. The blur is a background treatment, never a text treatment.
+2. **No body text sits on the blurred area.** Text on a frosted surface is
+   confined to the surface's own solid content region — a panel body, a menu
+   column — or sits on an opaque child. A label floating directly on the blur is
+   prohibited, because its measured contrast is a function of scroll position and
+   therefore not measurable at all.
+3. It carries `shadow.folded`, for the edge described in §3.6.
+4. It is one of the approved surfaces: `top bar`, `sidebar`, `content panel`,
+   `dropdown`, `auth panel`. Frost is a layout decision about hierarchy, so a card
+   or an input is not a frosted surface and does not become one to look louder.
+
+Frost is approved at `blur(16px)`. `blur(24px)` and above is reserved for the
+auth panel, which is a single-purpose surface with no scrolling content behind
+it; the more aggressive value is not a style upgrade, it is the cost of not being
+able to put content behind that particular panel.
+
+**Blur budget.** At most one frosted surface is stacked behind another, and no
+frosted surface may contain another frosted surface. Nested frost is where this
+technique turns to mush and where a performance cost that is defensible on one
+panel becomes indefensible across a page.
 
 ## 4. Typography
 
@@ -245,6 +352,13 @@ Rules:
 - Use only these sizes and weights.
 - Use sentence case by default.
 - Use uppercase only for overlines, compact metadata, and explicitly branded labels.
+- **Navigation labels and section labels in the sidebar use `overline` treatment** —
+  11px, weight 700, `letter-spacing: 0.12em`, uppercase. This is the one place
+  uppercase is a structural choice rather than a metadata one, and it is listed
+  here because it is what makes a long nav list scannable: a column of
+  wide-tracked capitals reads as a set of categories, where a column of
+  sentence-case words reads as a wall. It does not extend to a link inside body
+  copy, a button, or a table cell.
 - Keep body line length between approximately 60 and 75 characters.
 - Use `text-wrap: balance` for short headings only.
 - Do not use arbitrary letter spacing, line heights, or font sizes.
@@ -270,12 +384,28 @@ Desktop application layout:
 - collapsed sidebar: 84px;
 - top bar: 72px;
 - content maximum width: 1440px;
-- content horizontal padding: 32px at desktop, 24px at tablet, 16px at mobile;
 - content grid: 12 columns;
 - default grid gap: 24px;
 - page vertical rhythm begins at 32px after the top bar.
 
 The shell is light-theme only. It must not include a dark-mode control.
+
+**The content panel is inset.** The shell paints `canvas.wash` on the body, and the
+content sits on a frosted panel that is inset from the canvas by 4px on each
+edge, carrying `radius.surface`. Horizontal padding moves inside that panel, to
+32px at desktop, 24px at tablet, 16px at mobile.
+
+This is the single largest change to the shell and it is structural rather than
+decorative. Content on a bare canvas has no edge, so the page reads as an
+undifferentiated field and the sidebar reads as a stripe on it; content on an
+inset panel reads as a document sitting on a desk, and the frosted navigation
+around it reads as chrome. It also means the scroll container is the panel rather
+than the window, which is what keeps the top bar and the sidebar fixed without
+`position: fixed` on four elements.
+
+The panel's own scroll padding is 32px, rising to 40px at tablet and 48px at
+wide. The extra breathing room at larger widths is deliberate: a content column
+that runs edge to edge on a 1440px display has no measure and no hierarchy.
 
 ### 5.3 Breakpoints
 
@@ -495,9 +625,17 @@ No component may introduce a new state pattern. If a state is needed and is not 
 | `radius.control` | 12px | Buttons and inputs |
 | `radius.card` | 16px | Cards and panels |
 | `radius.panel` | 24px | Large feature surfaces |
+| `radius.surface` | 32px | The inset content panel, and the auth panel |
+| `radius.feature` | 40px | The sign-in card and one other full-bleed feature surface per page |
 | `radius.pill` | 999px | Pills and compact status indicators |
 
 No other radius values are allowed.
+
+The two additions above 24px exist for exactly two surfaces, and the restriction
+is the point. A 24px corner on a 1200px panel reads as a rounded rectangle; a 32px
+corner reads as a surface floating above another, because the radius is large
+enough to describe the corner's curvature at that scale. `radius.feature` is
+capped at one per page so it stays a signal rather than becoming the default.
 
 ### 9.2 Depth principles
 

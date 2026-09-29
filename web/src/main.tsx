@@ -13,6 +13,8 @@ import "./styles/base.css";
 import "./styles/components.css";
 import "./styles/shell.css";
 import "./styles/apps.css";
+// The shell frame last, so it wins by import order rather than by specificity.
+import "./styles/frame.css";
 
 // The session is resolved before the first paint of any route, so a page never
 // renders as "signed out" and then corrects itself a moment later. That flash is

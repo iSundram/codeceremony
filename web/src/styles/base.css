@@ -122,8 +122,11 @@ code,
 kbd,
 samp,
 pre {
-  font-family: var(--font-mono);
-  font-size: var(--text-code);
+  /* `font` rather than `font-family` + `font-size`: --text-* are shorthand
+   * tokens (`400 13px/20px <family>`), so `font-size: var(--text-code)` is a
+   * declaration the parser drops — inline code was rendering at the inherited
+   * 16px body size while looking like it should be 13px. */
+  font: var(--text-code);
 }
 
 /* §7.1 Divider. */

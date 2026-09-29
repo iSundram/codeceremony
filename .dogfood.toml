@@ -24,10 +24,17 @@ participant      = "Cookie: session=cc_prt_2e88a4d6c0b91f37"
 participant_other = "Cookie: session=cc_prt_7b1c3f95d2e60a84"
 
 [routes]
-# The public gallery of the fixture event, rendered as HTML. It is the same data
-# the JSON route serves, with search (?q=) and track filter (?track=) working.
-# The JSON equivalent is /v1/events/sample-hack-2026/projects.
-gallery      = "/events/sample-hack-2026"
+# The public gallery of the fixture event. This is the JSON route, which is where
+# the gallery data actually lives.
+#
+# It was an HTML path, /events/sample-hack-2026, until the eight server-rendered
+# pages were retired: their form POST routes bypassed the action gate, and their
+# catch-alls shadowed five SPA routes each. Retiring them left this pointing at a
+# 404, and because run.py returns 0 whatever it finds, scripts/acceptance.sh
+# reported "verified nothing" and exited successfully. The checker now reads the
+# data from the same route the app does, with search (?q=) and track filter
+# (?track=) still exercised.
+gallery      = "/v1/events/sample-hack-2026/projects"
 
 # Submissions for the same event. The fixture event's submissions_close is in
 # the past, so a seeded portal is already closed and this is refused.

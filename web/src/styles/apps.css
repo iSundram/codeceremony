@@ -109,18 +109,132 @@
  * AuthApp.tsx renders; they were written as auth-layout* and matched nothing. */
 .auth {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 480px);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 440px);
   gap: var(--space-16);
-  align-items: start;
+  /* Centred rather than start-aligned. The left column is prose and a lockup and
+   * the right is a form, and with start alignment the two sat at the top of a
+   * very tall empty page — the form floated in the corner and the space below
+   * both columns was dead. Centring the pair puts the eye on the form. */
+  align-items: center;
+  min-height: 100%;
   max-width: var(--shell-content-max);
   margin: 0 auto;
-  padding: var(--space-16) 0;
+  padding: var(--space-16) var(--shell-padding-desktop);
+}
+
+/* The brand panel. §3.7 names the auth panel as the one surface approved for the
+ * deeper blur, because it is a single-purpose screen with nothing scrolling
+ * behind it, and §9.1 caps radius.feature at one per page — which this is. The
+ * ramp travels navy to ink, so the label on it passes AA everywhere. */
+.auth__panel {
+  border-radius: var(--radius-feature);
+  background: var(--gradient-folded);
+  background-color: var(--navy);
+  color: var(--mist);
+  padding: var(--space-10);
+  box-shadow: var(--shadow-lifted);
+}
+
+.auth__panel-title {
+  color: var(--mist);
+}
+
+.auth__panel-lede,
+.auth__panel .field__label {
+  color: var(--mist);
+  opacity: 0.92;
+}
+
+/* An input on a dark panel cannot be the light-surface input, and a translucent
+ * white one would put a label on a background whose value depends on what is
+ * behind the page. It is mist at a fixed alpha over the panel, which is
+ * measurable. */
+.auth__panel .input {
+  background: rgba(207, 231, 248, 0.14);
+  border-color: rgba(207, 231, 248, 0.34);
+  color: var(--mist);
+}
+
+.auth__panel .input::placeholder {
+  color: rgba(207, 231, 248, 0.6);
+}
+
+.auth__panel .input:focus-visible {
+  border-color: var(--mist);
+  box-shadow: 0 0 0 2px rgba(207, 231, 248, 0.55);
+  outline: none;
+}
+
+.auth__panel .btn--primary {
+  /* The panel is already the ramp, so the button inverts to mist. A dark button
+   * on a dark panel is a button you cannot see. mist on mist is 1.00:1, so the
+   * label is ink and the fill is mist. */
+  background: var(--mist);
+  background-image: none;
+  color: var(--ink);
+  box-shadow: none;
+}
+
+.auth__panel .btn--primary:hover {
+  background: #e6f2fb;
+  box-shadow: 0 8px 20px -8px rgba(0, 0, 0, 0.4);
+}
+
+.auth__panel-separator {
+  border: 0;
+  border-top: 1px solid rgba(207, 231, 248, 0.28);
+  margin: var(--space-6) 0;
+}
+
+.auth__panel-link {
+  color: var(--mist);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: rgba(207, 231, 248, 0.5);
+}
+
+.auth__panel-link:hover {
+  color: var(--mist);
+  text-decoration-color: var(--mist);
+}
+
+.auth__panel .field__hint,
+.auth__panel .description-list dt {
+  color: rgba(207, 231, 248, 0.86);
+}
+
+.auth__panel .description-list dd {
+  color: var(--mist);
+}
+
+.auth__panel .code-inline {
+  background: rgba(207, 231, 248, 0.16);
+  border-color: rgba(207, 231, 248, 0.3);
+  color: var(--mist);
+}
+
+.auth__panel .auth__seeded {
+  border-top-color: rgba(207, 231, 248, 0.28);
+  color: rgba(207, 231, 248, 0.86);
+}
+
+.auth__panel .auth__seeded > summary {
+  color: var(--mist);
+}
+
+.auth__eyebrow {
+  font: var(--text-overline);
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-5);
 }
 
 .auth__logo {
-  width: 100%;
-  max-width: 320px;
-  height: auto;
+  width: auto;
+  max-width: 260px;
+  height: 40px;
   margin-bottom: var(--space-8);
 }
 
@@ -177,10 +291,45 @@
   .auth {
     grid-template-columns: minmax(0, 1fr);
     gap: var(--space-8);
-    padding: var(--space-8) 0;
+    padding: var(--space-8) var(--shell-padding-tablet);
   }
 
   .auth__points {
     display: none;
   }
+}
+
+@media (max-width: 767px) {
+  .auth {
+    padding: var(--space-6) var(--shell-padding-mobile);
+  }
+}
+
+/* The gallery's two filters: a search field and an event picker that were
+ * written as one row and never got a rule, so both rendered as full-width
+ * column blocks. This is that rule. */
+.gallery-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: end;
+}
+
+@media (max-width: 767px) {
+  .gallery-filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* The role list on the account overview: a bare <ul> of links that needed a
+ * rhythm of its own rather than the default bullet. */
+.role-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  list-style: none;
+}
+
+.role-list__item {
+  display: flex;
 }
