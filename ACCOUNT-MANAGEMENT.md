@@ -1,4 +1,8 @@
 # CodeCeremony — Account, Access, Team, and Notification Specification
+<p align="center">
+  <img src="docs/assets/codeceremony-logo.svg" alt="CodeCeremony" width="320" />
+</p>
+
 > **Partly superseded.** This is the account and roles design, kept as a record.
 > For the enforcement that actually exists, read
 > [`ARCHITECTURE.md`](ARCHITECTURE.md) section 5 and

@@ -1,5 +1,9 @@
 # THREAT-MODEL.md
 
+<p align="center">
+  <img src="docs/assets/codeceremony-logo.svg" alt="CodeCeremony" width="320" />
+</p>
+
 A written defence against Sybil votes, ballot stuffing, collusion, and the rest.
 
 The threat model of a hackathon judging platform is not a bank. Nobody is trying
@@ -240,6 +244,7 @@ gallery is a self-inflicted denial of service with no security benefit.
 | Account lockout | Deliberately omitted: it is a denial-of-service weapon aimed at judges. |
 | Rate-limit evasion by a botnet | Accepted. Per-account limits handle the realistic case. |
 | Transport security | The portal speaks plain HTTP. TLS is expected to terminate in front of it, and is not configured here. |
+| XSS through the frontend | The app ships no `innerHTML` for application data, and the API responses are JSON. The icon table is the one place markup is injected, and it is generated from a pinned release and asserted to contain geometry only. Content-Security-Policy is `default-src 'none'` on the server-rendered pages; the SPA is served from the same origin. |
 | A co-organizer acting maliciously inside their own event | A7 defends the boundary *between* events. Inside one, the platform's contribution is the audit trail, not prevention. |
 | A forged `Idempotency-Key` colliding with a victim's | Keys are scoped by actor, so a key only ever resolves inside the caller's own namespace. There is no cross-caller effect. |
 | Rewriting the discarded prefix of a trimmed audit chain | Retention means a suffix cannot rule this out. Mitigated by publishing `head` for anchoring against an independently held copy. |
@@ -262,6 +267,13 @@ because they need the object. The requirement is that a check must exist where
 to the same hash-chained log as a success, with the reason and the rule that
 produced it. A trail that records only what succeeded cannot answer the question
 an incident review actually starts from.
+
+**Idempotency keys and ETags are opt-in, and the opt-in is the point.** A
+protection a client does not use protects nothing, so both are enabled by a
+header rather than by default. What is not opt-in is the *semantics* once a key
+is present: a reused key with a different body is a 422 rather than a replay, and
+a stale `If-Match` is a 412 rather than a silent overwrite. The mechanism is
+advisory; the meanings are not.
 
 **Rate limits are keyed on the account, not the address, wherever the caller is
 authenticated.** This is not a detail. A hackathon venue, a university, or a

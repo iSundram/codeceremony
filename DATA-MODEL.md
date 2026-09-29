@@ -1,5 +1,9 @@
 # DATA-MODEL.md
 
+<p align="center">
+  <img src="docs/assets/codeceremony-logo.svg" alt="CodeCeremony" width="320" />
+</p>
+
 The schema CodeCeremony actually runs, how it is stored, and how data moves in
 and out.
 
@@ -76,19 +80,22 @@ tables — the reasoning is in section 2.
 | `normalization_runs` | reproducibility | `method_version`, `weights`, `input_hash` |
 | `normalized_scores` | the computed result | `raw_score`, `normalized_score`, `low_information`, `details` |
 | `result_snapshots` | published standings | immutable |
-| `comparisons` | recorded head-to-head verdicts | one per `(judge, {left, right})` unordered; `verdict` in {left, right, tie} |
+| `comparisons` | recorded head-to-head verdicts | one per `(judge, unordered pair)` — see below; `verdict` in {left, right, tie} |
 | `grants` | explicit allows and denies | `(user, action, event, object)`; mandatory `reason`; optional expiry |
 | `action_audit_entries` | the accountability record | append-only, hash-chained, `seq` contiguous within the retained window |
 | `audit_events` / `activity_entries` | the trail | actor set-null on delete, so history survives |
 
-Two of these deserve a note.
+The snapshot carries 32 collections in total. The ones that are **not** in it
+are as load-bearing as the ones that are: the audit chain and the idempotency
+records are deliberately absent, and section 3 explains why.
 
-**`comparisons` is keyed on the unordered pair.** One judge has one answer per
-pair of projects, and re-answering — including with the two sides swapped —
-updates the row rather than adding one. Two rows for one match would let a single
-judge contribute what the estimator reads as two independent verdicts. The row
-stores the orientation the judge last used, so a change of mind is visible in the
-data rather than hidden in a normalisation step.
+**`comparisons` is keyed on the unordered pair**, and that is not the obvious
+key. One judge has one answer per pair of projects; re-answering — including with
+the two sides swapped — updates the same row rather than adding one, because two
+rows for one match would let a single judge contribute what the estimator reads
+as two independent verdicts. The row stores the orientation the judge last used,
+so a change of mind is visible in the data rather than hidden behind a
+normalisation step.
 
 **`action_audit_entries` is a chain, not a log.** Each entry carries `seq`,
 `prev_hash` and `hash`, where the hash is an HMAC over the entry's own canonical

@@ -1,5 +1,9 @@
 # ARCHITECTURE.md
 
+<p align="center">
+  <img src="docs/assets/codeceremony-logo.svg" alt="CodeCeremony" width="320" />
+</p>
+
 How CodeCeremony is put together, and why each decision was made that way.
 
 ---
@@ -16,14 +20,23 @@ for, and it is worth being explicit about which doors it closed:
 | Normal choice | Closed by | What we did instead |
 |---|---|---|
 | Postgres or MySQL | a second service to run | single-file snapshot store |
-| Next.js / Vite SPA | Node toolchain, `npm install`, a build step in the image | server-rendered Go templates, `go:embed` |
+| A SPA with a Node server | a second runtime, a second process | a Vite build, embedded with `go:embed` |
 | OAuth / hosted auth | a hosted dependency | local accounts, opaque sessions |
 | Redis | a second service | in-process fixed windows |
 | A migration runner + SQL | nothing to apply it against | a documented, versioned snapshot format |
 | A CSS framework | a package install | the design tokens already in `design.md` |
 
 The result is a single static binary with one non-stdlib dependency
-(`golang.org/x/crypto`, for bcrypt) and one embedded stylesheet.
+(`golang.org/x/crypto`, for bcrypt), and a frontend that is built in a separate
+stage and embedded in it.
+
+The SPA row is the one that changed under me, and it is worth being precise
+about why rather than quietly editing the table. A frontend was originally
+rejected outright on the reasoning that it means a Node toolchain in the
+container. That reasoning turned out to be half right: a **Node server** at
+runtime is genuinely unaffordable, but a Node **build** is not, as long as it
+happens in a stage that never reaches the image. So the frontend exists, built by
+Vite, with no Node in the runtime. Section 7 has the full reasoning.
 
 ---
 
@@ -70,16 +83,31 @@ backend/
     fixtures/           the shared fixture loader
     seed/               the built-in demo data and the fixed credential table
     auth/               sessions, tokens, password hashing
-    httpapi/            routing, authorization, JSON API, HTML frontend
+    authz/              the action vocabulary, the resolver, and its ordering
+    httpapi/            routing, authorization, JSON API, and the embedded app
     ratelimit/          fixed-window budgets
     mailer/             templates, queue, dispatch, webhooks
     config/             environment parsing and validation
-    webassets/          embedded templates and stylesheet
+    webassets/          brand assets, the legacy templates, and the built SPA
+web/
+  src/
+    components/         the design.md section 7 inventory, as React
+    apps/               one directory per application surface
+    lib/                the typed API client, the session, the generated icons
+    styles/             tokens, base, components, shell, apps
+  public/               the brand assets, served from the build output
+scripts/                the icon generator and the frontend build
+tests/                  the e2e suite and the acceptance wrapper
 ```
 
 Dependencies run one way: `domain` knows nothing, `store` and `judging` know
-`domain`, and `httpapi` knows everything. There is no cycle, and `domain` has no
-imports from the project at all.
+`domain`, `authz` knows `domain`, and `httpapi` knows everything. There is no
+cycle, and `domain` has no imports from the project at all.
+
+The frontend has no dependency on Go and Go has no dependency on the frontend
+source: the build copies `web/dist` into `webassets/spa` and `go:embed` takes it
+from there. That is what lets the Go tests run on a checkout with no Node
+toolchain installed.
 
 ### The composition root
 
@@ -330,24 +358,61 @@ the estimator would read as two independent verdicts.
 
 ## 7. The frontend
 
-Server-rendered Go templates, embedded with `go:embed`, served from the same
-binary on the same port as the API.
+A React and TypeScript single-page app, built by Vite and **embedded in the Go
+binary** with `go:embed`, served from the same port as the API.
 
-A separate SPA was rejected for a concrete reason rather than a stylistic one: it
-would put a Node toolchain, a package install and a build step inside the
-container, which is exactly what the one-command rule cannot afford. The
-templates compile into the binary and the stylesheet is embedded, so there is
-nothing to fetch and nothing to build.
+This is a reversal of an earlier decision, and the reason is worth recording
+because the first answer was not wrong, just incomplete. The original choice was
+server-rendered Go templates, on the reasoning that a separate SPA would put a
+Node toolchain and a build step inside the container, which the one-command rule
+cannot afford. That reasoning still holds — and it is why there is **no Node
+runtime in the image**. What changed is where the build happens: the Node stage
+exists in the Dockerfile, produces static assets, and the runtime stage is still
+one static Go binary. `docker compose up` needs a network while the *image* is
+built, never to *run* the portal.
 
-The HTML pages read the same store through the same authorization primitives as
-the JSON routes, and the form handlers re-derive their own checks rather than
-delegating to the API handlers, so the two surfaces cannot drift into disagreeing
-about who may do what. The styling uses the approved palette and spacing scale
-from `design.md`; no component uses a raw colour.
+### Why Vite and not Next
 
-Responses carry a restrictive `Content-Security-Policy`
-(`default-src 'none'; style-src 'self'`), which costs nothing for a same-origin
-server-rendered app and rules out the obvious injection vectors.
+Next needs a Node **server** at runtime. That is two runtimes to operate, a
+second process to supervise, and a `Content-Security-Policy` that could no
+longer be `default-src 'none'`. Vite produces static files, so the Go binary
+embeds them and stays the only process.
+
+The cost is honest and worth stating: the public gallery is client-rendered, so
+it is worse for search engines than a server-rendered page would be. For a
+self-hosted portal whose audience arrives from a link an organizer sends rather
+than from a search, that is the right trade — but it is a trade, not a free win.
+
+### The applications
+
+One directory per surface under `web/src/apps`: `auth`, `dashboard`, `events`
+(public), `account`, `judge`, `organizer`, `admin`. Hiding a group in the
+sidebar is a courtesy to the reader and **never** the control: every route
+authorizes independently in the backend, so a viewer who types a URL they were
+not offered is refused by the resolver rather than by the navigation. The judge
+app in particular reads a session-scoped assignments endpoint rather than
+fetching everything and filtering in the browser, which would ship a judge's
+peers' work to their machine.
+
+The API client and the server are checked against each other by a test that
+reads both sources. That test exists because the client was written against the
+documented routes and six of the paths it used did not exist; a wrong path is a
+404 in production and nothing at all in development.
+
+### design.md is enforced, not just referenced
+
+The styles are the token layer transcribed from `design.md` clause by clause,
+and 40 component tests assert the accessibility rules a unit test can actually
+prove — each test naming the clause it comes from. Three of them failed on first
+run and found real gaps. A source scan rejects any icon name outside the approved
+Lucide set, which catches a glyph that would render as nothing at all.
+
+### The legacy pages
+
+Nine server-rendered templates remain and are still routed, so the portal is
+useful on a checkout where the frontend has not been built and `go test ./...`
+works with no Node toolchain installed. They are being retired app by app; the
+build output wins where both exist.
 
 ---
 
@@ -421,10 +486,19 @@ against on the real schema.
 
 ## 11. Testing
 
-Go's standard library only. `go test ./...` runs nine packages. `tests/e2e.py`
-builds the binary, boots it on a scratch port and runs 129 assertions against a
-real process, because several of the things below only exist or only fail across
-a real connection.
+Three suites, because they catch different things.
+
+- **Go**, standard library only. `go test ./...` runs nine packages that carry tests; the other three are type-only.
+- **Vitest**, 40 tests over the component library and the design contract.
+- **e2e**, `tests/e2e.py` builds the binary, boots it on a scratch port and runs
+  142 assertions against a real process, because several of the things below only
+  exist or only fail across a real connection.
+
+The frontend and the backend are additionally checked against each other: a test
+reads the Go router and the TypeScript client and fails if the client asks for a
+path the server does not register, or uses the wrong method on one it does. That
+test exists because the client was written against the documented routes and six
+of the paths it used did not exist.
 
 The tests are not coverage for its own sake. Each one exists because something
 was wrong at some point during the build:
@@ -455,6 +529,10 @@ was wrong at some point during the build:
 - `internal/httpapi/concurrency_test.go` — a review ETag that included
   `UpdatedAt`, so a judge saving identical scores twice invalidated their own
   token and a save-then-save client was refused against its last write.
+- `web/src/test/components.test.tsx` — a field error that was visible but never
+  announced, a skeleton whose bars were hidden by a wrapper rather than
+  individually, and two icon names that are not in the approved Lucide set and
+  therefore rendered as nothing at all.
 
 `AUDIT_SECRET` is the newest configuration variable and has a fallback worth
 knowing about; see §12.
@@ -485,7 +563,40 @@ is derived, because the consequence of not knowing is that rotating
 that is discovered by watching verifications fail rather than by reading a
 release note.
 
-`IDEMPOTENCY-TTL` is not configurable. The retention window is a day, which is
-long enough to cover a client retrying after a weekend and short enough that the
-table stays small. If an operator needs to reason about its size,
-`IdempotencyStats` reports the tracked and pending counts.
+### The rest
+
+| Variable | Default | What it does |
+|---|---|---|
+| `APP_ENV` | `development` | `production` turns on the guard rails below |
+| `HTTP_ADDR` | `:8080` | listen address |
+| `PUBLIC_PORT` | `8080` | host-side published port, read by compose |
+| `DATA_DIR` | `./data` | the one state file lives here |
+| `PERSIST_INTERVAL_SECONDS` | `5` | how often the journal rewrites it |
+| `FIXTURES_PATH` | empty | shared fixture file; absent means the built-in seed |
+| `SEED_DEMO_DATA` | `true` | mint the fixed demo tokens |
+| `SEED_PASSWORD` | `codeceremony-dev` | shared password for every seeded account |
+| `SESSION_TTL_HOURS` | `12` | session lifetime |
+| `ALLOWED_ORIGIN` | `http://localhost:3000` | CORS origin, for a split dev frontend |
+| `APP_BASE_URL` | — | absolute links in mail |
+| `SMTP_*` | empty | `HOST`, `PORT`, `USERNAME`, `PASSWORD`, `ENCRYPTION`, `FROM`, `FROM_NAME`; mail falls back to a log sender when unset |
+| `MAIL_MAX_ATTEMPTS` | `4` | delivery retries |
+| `MAIL_INTERVAL_SECONDS` | `10` | dispatch interval |
+| `MAIL_BATCH_SIZE` | `25` | deliveries per tick |
+
+Idempotency records are **not** configurable. The retention window is a day,
+which is long enough to cover a client retrying after a weekend and short enough
+that the table stays small. `IdempotencyStats` reports the tracked and pending
+counts for an operator who needs to reason about it.
+
+### Build order, and what a checkout without Node produces
+
+`scripts/build_frontend.sh` installs, typechecks, tests and builds the frontend,
+then stages the output into `backend/internal/httpapi/webassets/spa` for the
+`go:embed`. The Dockerfile does the same in a separate stage, so the image is
+built from the repository root.
+
+With no build staged, the Go binary still serves the JSON API and the nine
+server-rendered pages, and `go test ./...` passes with no Node toolchain
+installed. The API must not depend on a frontend build to be testable, and a
+developer reading `THREAT-MODEL.md` should be able to reproduce a finding without
+installing a package manager.

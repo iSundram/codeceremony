@@ -1,5 +1,9 @@
 # CodeCeremony — Next Expansion Roadmap
 
+<p align="center">
+  <img src="docs/assets/codeceremony-logo.svg" alt="CodeCeremony" width="320" />
+</p>
+
 > **Superseded.** This is the pre-implementation roadmap, kept as a record of the
 > planning. For what is actually built, read [`README.md`](README.md) and
 > [`ARCHITECTURE.md`](ARCHITECTURE.md).

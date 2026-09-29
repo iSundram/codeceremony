@@ -1,5 +1,9 @@
 # CodeCeremony
 
+<p align="center">
+  <img src="docs/assets/codeceremony-logo.svg" alt="CodeCeremony" width="320" />
+</p>
+
 > An open source, self-hostable submission and judging platform for hackathons.
 > Built during DOGFOOD 2026. MIT licensed.
 
@@ -56,6 +60,14 @@ rate limits, duplicate detection and a readable audit trail.
 outbound webhooks, and bulk import/export. *Not* implemented: certificate
 generation, signed participation records, and the embeddable widget.
 
+**The UI.** Seven applications — sign-in, dashboard, public events, my account,
+judging, organizing, administration — built as a React and TypeScript app and
+embedded in the Go binary, so the portal is still one process with no Node
+runtime. It follows `design.md`: the component inventory in section 7, the token
+layer from sections 3 to 5, and 40 tests that assert the accessibility rules in
+section 13. Hiding a link in the UI is never the access control; every route
+authorizes in the backend.
+
 Claimed in `.dogfood.toml` as T1–T3. The acceptance checker has no T3 tests, so
 its report says `verified T1 T2`; that is the checker's coverage, not a failure.
 T4 is deliberately not claimed.
@@ -87,10 +99,26 @@ number decided by where the iteration happened to stop.
 Second worth looking at: **role isolation, three times over.** `judgeScores`
 refuses a `?judge=` naming anyone but the caller, the store call is
 `ReviewsForJudge(eventID, principal.UserID)` so the judge identity is never read
-from the request at all, and every all-judges endpoint requires a permission the
-judge role does not hold. There is no `/judges/{id}/scores` route. Seven
-score-bearing routes are probed as a non-owning judge in
+from the request at all, and every all-judges endpoint requires an action the
+judge role does not hold. There is no `/judges/{id}/scores` route. Eighteen
+score-, review- and export-bearing routes are probed as a non-owning judge in
 `internal/httpapi/isolation_test.go`.
+
+Third: **every authorization decision is accounted for, including the refusals.**
+A denial is written to the same hash-chained log as a success, carrying the actor,
+the action, the target, the outcome and — the part that matters — the rule that
+decided it. A trail that records only what succeeded cannot answer the question
+an incident review actually starts from. `GET /v1/audit/actions.csv` exports it
+with `prev_hash` included, so a third party can check the log is internally
+consistent without holding the key; `GET /v1/audit/verify` reconciles it.
+
+**And a fourth, because it changed how the others work:** routes are gated on an
+**action** from a closed vocabulary rather than on a role, which is what makes an
+explicit grant expressible. You cannot grant a role, only things. A recorded deny
+is evaluated before any allow, so revoking a permission is one API call rather
+than a role change and a wait. `GET /v1/permissions` publishes the matrix by
+reading the same maps the resolver reads, so the documentation cannot drift from
+the enforcement.
 
 ---
 
@@ -112,12 +140,31 @@ Back up is `cp` the data file. Reset is `docker compose down -v`.
 
 ### Locally
 
+With the frontend built and staged, the binary serves the whole portal:
+
 ```bash
-cd backend
-FIXTURES_PATH=./fixtures.json go run ./cmd/codeceremony
+bash scripts/build_frontend.sh
+cd backend && go build ./cmd/codeceremony
+FIXTURES_PATH=./fixtures.json ./codeceremony
 ```
 
 Go 1.25. One non-stdlib dependency (`golang.org/x/crypto`, for bcrypt).
+
+Without the frontend built, the same binary still serves the JSON API and nine
+server-rendered pages, so the backend is runnable and testable with no Node
+toolchain at all.
+
+### Working on the frontend
+
+```bash
+cd web
+npm install
+npm run dev      # http://localhost:5173, proxying /v1 to the Go server on :8080
+```
+
+Two processes in development, one in production. The proxy exists so both are on
+the same origin in development, which means there is no CORS configuration and no
+credential difference between the two environments.
 
 ### Sign in
 
@@ -153,8 +200,10 @@ lifecycle can be walked through without touching a clock.
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | How it is built, and why each decision was made. Includes the constraint that closed most doors. |
 | [`DATA-MODEL.md`](DATA-MODEL.md) | The schema that actually runs, the snapshot format, import and export paths. |
 | [`JUDGING.md`](JUDGING.md) | Assignment, the scoring math, the normalization method defended, and what it cannot do. |
-| [`THREAT-MODEL.md`](THREAT-MODEL.md) | Sybil votes, ballot stuffing, collusion, and the two gaps that are stated rather than hidden. |
-| [`design.md`](design.md) | The visual system the frontend follows. |
+| [`THREAT-MODEL.md`](THREAT-MODEL.md) | Sybil votes, ballot stuffing, collusion, and the gaps that are stated rather than hidden. |
+| [`design.md`](design.md) | The visual contract the frontend implements, and the decisions that were open when this started. |
+| [`ACCOUNT-MANAGEMENT.md`](ACCOUNT-MANAGEMENT.md) | Accounts, sessions, teams and notifications. |
+| [`STRUCTURE.md`](STRUCTURE.md) | The pre-implementation plan, kept as a record. Superseded, and it says so. |
 
 ---
 
@@ -162,11 +211,12 @@ lifecycle can be walked through without touching a clock.
 
 Stated here and in the code rather than left to be discovered.
 
-1. **Cross-event isolation is not enforced between organizers.** Any user with
-   the global `organizer` role can act on any event by supplying its slug. A
-   per-event role model exists in the domain types and is used for display, but no
-   route enforces it. This is correct for one organisation self-hosting its own
-   events and a real gap for multi-tenant hosting. See `THREAT-MODEL.md` A7.
+1. **Cross-event isolation is now enforced, with two narrow gaps.** Every route
+   declares the event it acts on and the gate resolves it before deciding, so an
+   organizer of one event is refused on another. What remains: a handler that
+   loads a row still re-checks against the row, because the gate resolved an
+   event and not a record, and there is no trust anchor for adding a
+   *co*-organizer. See `THREAT-MODEL.md` A7.
 2. **Storage is a single snapshot file, not a database.** Reads are linear scans
    and writes are whole-file. That is the right shape for a few thousand projects
    in one event and the wrong shape for a SaaS. The format is versioned and
@@ -185,11 +235,17 @@ Stated here and in the code rather than left to be discovered.
 6. **No password reset flow completes.** Tokens are generated and stored; there
    is no route that redeems one.
 7. **HTTP only.** TLS is expected to terminate in front of the portal.
-8. **`docker compose up` was verified by rehearsal, not by Docker.** The image is
-   distroless, which is not installed in the build environment used here. The
-   binary was built with the same flags, run under the same environment
-   variables, on a network namespace where port 8080 was genuinely free, and
-   driven through the same checks. Treat the container itself as untested.
+8. **`docker compose up` was verified by rehearsal, not by Docker.** Docker is not
+   installed in the environment used here. The binary was built with the same
+   flags, run under the same environment variables, and driven through the same
+   142-assertion suite on a genuinely free port. Treat the container itself as
+   untested. The Dockerfile is a three-stage build — Node, then Go, then
+   distroless — and it has never been executed end to end.
+9. **The new frontend has not been driven through a signed-in session.** The
+   shell, the brand assets, the client-route fallback and the API isolation are
+   all asserted over HTTP against a real process, and the Go, Vitest and e2e
+   suites are green. What has not happened is a judge signing in and completing a
+   review through the React app, which is the gap to close first.
 
 ---
 
@@ -200,19 +256,46 @@ cd backend
 go build ./... && go vet ./... && go test ./...
 ```
 
-Eight test packages, standard library only. The tests are not coverage for its
-own sake — each one exists because something was wrong at some point during the
-build. A snapshot that carried users but not events. Float sums differing in the
-last bit because criteria were iterated in randomized map order. A rubric weight
-distribution that produced a total of 125 for three criteria. They are the record
-of what went wrong.
-
-To regenerate the acceptance report:
+Three suites:
 
 ```bash
-cd backend && go build -o /tmp/codeceremony ./cmd/codeceremony
-FIXTURES_PATH=./fixtures.json /tmp/codeceremony &
-cd .. && python3 run.py .dogfood.toml > acceptance-report.txt
+cd backend && go build ./... && go vet ./... && go test ./...   # 9 packages
+cd web     && npx tsc -b && npx vitest run                      # 40 tests
+python3 tests/e2e.py                                            # 142 assertions
+```
+
+The e2e suite builds the binary, boots it on a scratch port and drives it over a
+real connection. The tests are not coverage for their own sake — each one exists
+because something was wrong at some point during the build. A snapshot that
+carried users but not events. Float sums differing in the last bit because
+criteria were iterated in randomized map order. A rubric weight distribution that
+produced a total of 125 for three criteria. A hash chain that could never verify
+because its sentinels were seeded so neither could update. They are the record of
+what went wrong.
+
+There is also a contract test that reads the Go router and the TypeScript client
+and fails if the client asks for a path the server does not register. It exists
+because the frontend was written against the documented routes and six of the
+paths it used did not exist.
+
+To regenerate the acceptance report, which starts a portal, checks it and stops
+it in one foreground command:
+
+```bash
+bash scripts/acceptance.sh
+```
+
+To build the frontend after changing it:
+
+```bash
+bash scripts/build_frontend.sh && cd backend && go build ./cmd/codeceremony
+```
+
+To refresh the icon inventory after a Lucide upgrade:
+
+```bash
+npm pack lucide-static@1.48.0 && tar xzf lucide-static-*.tgz
+python3 scripts/gen_icons.py && rm -rf package lucide-static-*.tgz
 ```
 
 ---

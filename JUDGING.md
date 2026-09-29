@@ -1,5 +1,9 @@
 # JUDGING.md — assignment, scoring, and the normalization method
 
+<p align="center">
+  <img src="docs/assets/codeceremony-logo.svg" alt="CodeCeremony" width="320" />
+</p>
+
 This document is the argument for how CodeCeremony turns raw review scores into a
 standing. It covers the rubric, how judges get work, the arithmetic, the evidence
 that the arithmetic is trustworthy, and — at some length — what the method
@@ -313,6 +317,27 @@ and no memory of what you said about the last project — and it is what people
 actually do when forced to rank things.
 
 So the portal offers a second view built only on head-to-head verdicts.
+
+### A second bug worth recording
+
+The decisive-panel warning fired on **every** response, and its test passed the
+whole time it was wrong.
+
+The check compares the fitted strength spread against a threshold. Both sentinels
+for that spread were seeded wrong: the maximum started at `+Inf` and the minimum
+at `0`. A Bradley-Terry strength is always positive, so neither could ever
+update — the maximum never moved because nothing is above infinity, and the
+minimum never moved because nothing is below zero. The ratio was therefore always
+infinite and the warning was always true.
+
+The existing test asserted that a genuinely decisive panel sets the flag, and it
+did — for the wrong reason. A warning that fires unconditionally is worse than no
+warning, because a reader learns to ignore it within a day. The condition is now
+detected **structurally**, from whether any project never lost and any never won,
+which is exact rather than a proxy; and there is now a second test asserting that
+a panel *with a cycle* is not flagged. A threshold that does not fire for a
+genuinely decisive panel whose truncated fit happens to stay small is the same
+error in the other direction.
 
 ### Recorded verdicts, and derived comparisons
 

@@ -1,4 +1,8 @@
 # CodeCeremony — Comprehensive Product Feature Specification
+<p align="center">
+  <img src="docs/assets/codeceremony-logo.svg" alt="CodeCeremony" width="320" />
+</p>
+
 > **Superseded.** This is the pre-implementation feature specification, kept as a
 > record of what was planned. For what is actually built and what is honestly
 > missing, read [`README.md`](README.md), which lists the real tier claims and the
