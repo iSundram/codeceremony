@@ -3,10 +3,12 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/iSundram/codeceremony/backend/internal/auth"
+	"github.com/iSundram/codeceremony/backend/internal/authz"
 	"github.com/iSundram/codeceremony/backend/internal/domain"
 )
 
@@ -77,7 +79,12 @@ func (s *Server) listEventStaff(w http.ResponseWriter, r *http.Request) {
 	members := s.store.EventStaffMembers(event.ID)
 	views := make([]map[string]any, 0, len(members))
 	for _, member := range members {
-		view := map[string]any{"staff": member, "permissions": member.Role.Can(domain.PermissionManageEvent)}
+		// can_manage_event reads the action table rather than the old
+		// permission map, so the value shown is the value that is enforced.
+		view := map[string]any{
+			"staff":            member,
+			"can_manage_event": authz.EventRoleAllows(member.Role, authz.ActionEventUpdate),
+		}
 		if user, err := s.store.UserByID(member.UserID); err == nil {
 			view["display_name"] = user.DisplayName
 			if staff {
@@ -150,43 +157,43 @@ func (s *Server) removeEventStaff(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"user_id": userID, "removed": true}})
 }
 
+// permissionMatrix publishes what the resolver actually enforces.
+//
+// It is generated from the authz tables rather than restated, because the old
+// version enumerated permissions separately and had already drifted from the
+// code: the endpoint advertised a matrix that was not the one being applied,
+// which is worse than publishing none.
 func (s *Server) permissionMatrix(w http.ResponseWriter, r *http.Request) {
-	roles := []domain.Role{domain.RoleParticipant, domain.RoleJudge, domain.RoleOrganizer, domain.RoleAdmin}
-	platform := map[domain.Role][]domain.Permission{}
-	for _, role := range roles {
-		for _, permission := range allPermissions() {
-			if role.Can(permission) {
-				platform[role] = append(platform[role], permission)
-			}
-		}
-	}
-	eventRoles := []domain.EventRole{domain.EventRoleOwner, domain.EventRoleCoOrganizer, domain.EventRoleJudgeLiaison, domain.EventRoleViewer}
-	event := map[domain.EventRole][]domain.Permission{}
-	for _, role := range eventRoles {
-		for _, permission := range allPermissions() {
-			if role.Can(permission) {
-				event[role] = append(event[role], permission)
-			}
-		}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"data":           domain.PermissionMatrix(platform, event),
-		"platform_roles": roles,
-		"event_roles":    domain.EventRoleNames(),
-	})
-}
+	platform := authz.BuildMatrix()
+	event := authz.BuildEventMatrix()
 
-func allPermissions() []domain.Permission {
-	return []domain.Permission{
-		domain.PermissionViewOwnScores, domain.PermissionViewPeerScores, domain.PermissionSubmitProject,
-		domain.PermissionReviewProject, domain.PermissionManageEvent, domain.PermissionExportData,
-		domain.PermissionViewAudit, domain.PermissionManagePlatform, domain.PermissionVote,
-		domain.PermissionComment, domain.PermissionManageSubmission, domain.PermissionManageTeam,
-		domain.PermissionViewOwnSessions, domain.PermissionRevokeOwnSession, domain.PermissionViewAnySessions,
-		domain.PermissionManageRoles, domain.PermissionViewOwnNotifications, domain.PermissionManageNotifications,
-		domain.PermissionManageIntegrations, domain.PermissionManageSelf, domain.PermissionCancelDeletion,
-		domain.PermissionViewAssignments, domain.PermissionManageAssignments, domain.PermissionDeclareConflict,
+	roles := make([]string, 0, len(platform))
+	for role := range platform {
+		roles = append(roles, role)
 	}
+	sort.Strings(roles)
+	eventRoles := make([]string, 0, len(event))
+	for role := range event {
+		eventRoles = append(eventRoles, role)
+	}
+	sort.Strings(eventRoles)
+
+	actions := make([]string, 0, len(authz.All()))
+	for _, action := range authz.All() {
+		actions = append(actions, string(action))
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data": map[string]any{
+			"platform_roles":   platform,
+			"event_roles":      event,
+			"actions":          actions,
+			"resources":        authz.Resources(),
+			"resolution_order": authz.ResolutionOrder(),
+		},
+		"platform_roles": roles,
+		"event_roles":    eventRoles,
+	})
 }
 
 func (s *Server) eventDirectory(w http.ResponseWriter, r *http.Request) {
@@ -275,7 +282,7 @@ func (s *Server) directoryCatalogs() map[string]any {
 	return map[string]any{
 		"states":               states,
 		"activity_by_category": activity,
-		"permission_count":     len(allPermissions()),
+		"action_count":         len(authz.All()),
 		"event_roles":          domain.EventRoleNames(),
 	}
 }

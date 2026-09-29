@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/iSundram/codeceremony/backend/internal/authz"
 	"github.com/iSundram/codeceremony/backend/internal/domain"
 	"github.com/iSundram/codeceremony/backend/internal/seed"
 )
@@ -72,6 +73,7 @@ type Snapshot struct {
 	Activity       []domain.ActivityEntry       `json:"activity_entries"`
 	Notifications  []domain.Notification        `json:"notifications"`
 	AuditEvents    []domain.AuditEvent          `json:"audit_events"`
+	Grants         []authz.Grant                `json:"grants"`
 }
 
 // Snapshot captures the current durable state.
@@ -205,6 +207,9 @@ func (s *Store) Snapshot() Snapshot {
 	for _, event := range s.auditEvents {
 		snapshot.AuditEvents = append(snapshot.AuditEvents, event)
 	}
+	for _, grant := range s.grants {
+		snapshot.Grants = append(snapshot.Grants, grant)
+	}
 	snapshot.Users = sortBy(snapshot.Users, func(u domain.User) string { return u.ID })
 	snapshot.Judges = sortBy(snapshot.Judges, func(p domain.JudgeProfile) string { return p.UserID })
 	snapshot.Conflicts = sortBy(snapshot.Conflicts, func(c domain.ConflictDeclaration) string { return c.ID })
@@ -232,6 +237,7 @@ func (s *Store) Snapshot() Snapshot {
 	snapshot.Webhooks = sortBy(snapshot.Webhooks, func(w domain.Webhook) string { return w.ID })
 	snapshot.Notifications = sortBy(snapshot.Notifications, func(n domain.Notification) string { return n.ID })
 	snapshot.AuditEvents = sortBy(snapshot.AuditEvents, func(a domain.AuditEvent) string { return a.ID })
+	snapshot.Grants = sortBy(snapshot.Grants, func(g authz.Grant) string { return g.ID })
 
 	// Roster, staff and activity are keyed by a composite, so they are sorted
 	// through the same key helpers the store itself uses.
@@ -306,6 +312,7 @@ func (s *Store) Restore(snapshot Snapshot) error {
 	s.reviews = make(map[string]domain.Review, len(snapshot.Reviews))
 	s.notifications = make(map[string]domain.Notification, len(snapshot.Notifications))
 	s.auditEvents = make(map[string]domain.AuditEvent, len(snapshot.AuditEvents))
+	s.grants = make(map[string]authz.Grant, len(snapshot.Grants))
 	s.mail = make(map[string]domain.MailMessage)
 	s.mailByDedupe = make(map[string]domain.MailMessage)
 	s.mailPreferences = make(map[string]domain.MailPreferences)
@@ -409,6 +416,9 @@ func (s *Store) Restore(snapshot Snapshot) error {
 	for _, event := range snapshot.AuditEvents {
 		s.auditEvents[event.ID] = event
 	}
+	for _, grant := range snapshot.Grants {
+		s.grants[grant.ID] = grant
+	}
 	s.restored = true
 	return nil
 }
@@ -464,5 +474,6 @@ func (s *Store) SeedFrom(data seed.Data) {
 	s.reviews = seeded.reviews
 	s.notifications = seeded.notifications
 	s.auditEvents = seeded.auditEvents
+	s.grants = seeded.grants
 	s.restored = false
 }

@@ -15,6 +15,13 @@ type Principal struct {
 	Email     string
 	Role      domain.Role
 	SessionID string
+	// State is the account's lifecycle state. It is carried on the principal so
+	// the authorization resolver can refuse a suspended account as its first
+	// step, rather than each handler remembering to check.
+	State domain.AccountState
+	// Assured records whether this session has passed a second factor. Routes
+	// that need a fresh authentication check it rather than the session's age.
+	Assured bool
 }
 
 type contextKey struct{}

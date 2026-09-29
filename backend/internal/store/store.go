@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/iSundram/codeceremony/backend/internal/authz"
 	"github.com/iSundram/codeceremony/backend/internal/domain"
 	"github.com/iSundram/codeceremony/backend/internal/seed"
 )
@@ -53,6 +54,9 @@ type Store struct {
 	sessions           map[string]domain.Session
 	notifications      map[string]domain.Notification
 	auditEvents        map[string]domain.AuditEvent
+	grants             map[string]authz.Grant
+
+	actionAudit actionAudit
 
 	// restored records whether the current contents came from a snapshot rather
 	// than from a seed, which the readiness probe reports.
@@ -98,6 +102,7 @@ func New(data seed.Data) *Store {
 		sessions:           make(map[string]domain.Session),
 		notifications:      make(map[string]domain.Notification, len(data.Notifications)),
 		auditEvents:        make(map[string]domain.AuditEvent, len(data.AuditEvents)),
+		grants:             make(map[string]authz.Grant, len(data.Grants)),
 	}
 	for _, user := range data.Users {
 		store.users[user.ID] = user
@@ -187,6 +192,13 @@ func New(data seed.Data) *Store {
 	for _, event := range data.AuditEvents {
 		store.auditEvents[event.ID] = event
 	}
+	for _, grant := range data.Grants {
+		store.grants[grant.ID] = grant
+	}
+	// The audit chain is keyed from the caller's secret and is never restored
+	// from a snapshot: restoring old entries would either break the chain or
+	// require persisting the signing key alongside the data it protects.
+	store.initActionAudit(data.AuditSecret)
 	return store
 }
 

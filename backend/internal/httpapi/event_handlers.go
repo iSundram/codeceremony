@@ -11,6 +11,11 @@ import (
 )
 
 func (s *Server) createEvent(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.PrincipalFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "authentication is required")
+		return
+	}
 	var request struct {
 		Slug             string `json:"slug"`
 		Name             string `json:"name"`
@@ -55,6 +60,30 @@ func (s *Server) createEvent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "validation_error", "event could not be created")
 		return
 	}
+
+	// Whoever creates an event owns it.
+	//
+	// Without this an event has no owner, and an event with no owner cannot have
+	// its staff, panel or settings changed by anyone, because those rights come
+	// from the owner role. Ownership at creation is also what makes per-event
+	// scoping usable rather than merely restrictive: the creator's authority is
+	// derived from the event, not from a global role, so it follows the event
+	// and stops with it.
+	owner := domain.EventStaff{
+		EventID: event.ID, UserID: principal.UserID, Role: domain.EventRoleOwner,
+		Title: "Owner", AddedBy: principal.UserID, CreatedAt: s.now().UTC(),
+	}
+	if _, err := s.store.AddEventStaff(owner); err != nil {
+		// The event exists and the caller is a real user, so this can only be
+		// an internal fault rather than anything the caller did wrong.
+		s.logger.Error("could not assign event ownership at creation",
+			"event_id", event.ID, "user_id", principal.UserID, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal_error",
+			"the event was created but could not be given an owner")
+		return
+	}
+	s.audit(r, principal.UserID, "event.created", "event", event.ID, event.ID,
+		"created "+event.Name, map[string]any{"owner": principal.UserID})
 	writeJSON(w, http.StatusCreated, map[string]any{"data": event})
 }
 

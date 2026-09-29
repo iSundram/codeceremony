@@ -3,6 +3,7 @@ package seed
 import (
 	"time"
 
+	"github.com/iSundram/codeceremony/backend/internal/authz"
 	"github.com/iSundram/codeceremony/backend/internal/domain"
 )
 
@@ -36,6 +37,11 @@ type Data struct {
 	Rubrics         []domain.Rubric
 	Notifications   []domain.Notification
 	AuditEvents     []domain.AuditEvent
+	Grants          []authz.Grant
+	// AuditSecret keys the action-audit chain. It is configuration, not data:
+	// it is passed in rather than persisted, so a data file cannot be used to
+	// forge history.
+	AuditSecret string
 }
 
 func Default(passwordHash string) Data {

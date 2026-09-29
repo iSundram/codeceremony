@@ -13,6 +13,7 @@ const (
 	EventRoleOwner        EventRole = "owner"
 	EventRoleCoOrganizer  EventRole = "co_organizer"
 	EventRoleJudgeLiaison EventRole = "judge_liaison"
+	EventRoleModerator    EventRole = "moderator"
 	EventRoleViewer       EventRole = "viewer"
 )
 
@@ -42,6 +43,11 @@ var eventRolePermissions = map[EventRole]map[Permission]struct{}{
 		PermissionManageEvent:       {},
 		PermissionViewAudit:         {},
 	},
+	EventRoleModerator: {
+		PermissionManageSubmission: {},
+		PermissionComment:          {},
+		PermissionViewAssignments:  {},
+	},
 	EventRoleViewer: {
 		PermissionViewAssignments: {},
 	},
@@ -67,6 +73,8 @@ func (r EventRole) Rank() int {
 		return 3
 	case EventRoleCoOrganizer:
 		return 2
+	case EventRoleModerator:
+		return 1
 	case EventRoleJudgeLiaison:
 		return 1
 	case EventRoleViewer:
@@ -202,4 +210,13 @@ func PermissionMatrix(platform map[Role][]Permission, event map[EventRole][]Perm
 		return descriptors[i].Category < descriptors[j].Category
 	})
 	return descriptors
+}
+
+// ParseEventRole validates a caller-supplied event role string.
+func ParseEventRole(value string) (EventRole, error) {
+	role := EventRole(value)
+	if !role.Valid() {
+		return "", fmt.Errorf("unknown event role %q", value)
+	}
+	return role, nil
 }

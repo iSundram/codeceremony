@@ -3,6 +3,9 @@ package httpapi
 import (
 	"net/http"
 	"testing"
+
+	"github.com/iSundram/codeceremony/backend/internal/authz"
+	"github.com/iSundram/codeceremony/backend/internal/domain"
 )
 
 func TestActivityLogIsRecordedAndFiltered(t *testing.T) {
@@ -165,34 +168,72 @@ func TestEventStaffLifecycleAndPermissions(t *testing.T) {
 	}
 }
 
-func TestPermissionMatrixDescribesEveryPermission(t *testing.T) {
+// The published matrix must describe every action, and must be derived from the
+// table the resolver reads. The previous version of this endpoint enumerated
+// permissions separately from the code that enforced them and had already
+// drifted, so the test now checks the two are the same thing rather than
+// checking a hand-written list is self-consistent.
+func TestPermissionMatrixDescribesEveryAction(t *testing.T) {
 	server, _, _ := newTestServer(t)
 	response := request(t, server, http.MethodGet, "/v1/permissions", "", nil)
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200, body = %s", response.Code, response.Body.String())
 	}
 	payload := decodeAssignmentsBody(t, response)
-	entries := payload["data"].([]any)
-	if len(entries) != len(allPermissions()) {
-		t.Fatalf("matrix has %d entries, want %d", len(entries), len(allPermissions()))
+	data := payload["data"].(map[string]any)
+
+	actions := data["actions"].([]any)
+	if len(actions) != len(authz.All()) {
+		t.Fatalf("matrix lists %d actions, want %d", len(actions), len(authz.All()))
 	}
-	seen := map[string]bool{}
-	for _, item := range entries {
-		entry := item.(map[string]any)
-		key := entry["key"].(string)
-		seen[key] = true
-		if entry["description"] == "" || entry["category"] == "" {
-			t.Fatalf("permission %q is missing documentation: %v", key, entry)
+	seen := make(map[string]bool, len(actions))
+	for _, raw := range actions {
+		action := raw.(string)
+		seen[action] = true
+		if !authz.Action(action).Valid() {
+			t.Errorf("the matrix advertises %q, which is not a declared action", action)
 		}
 	}
-	for _, permission := range allPermissions() {
-		if !seen[string(permission)] {
-			t.Fatalf("permission %q missing from the matrix", permission)
+	for _, action := range authz.All() {
+		if !seen[string(action)] {
+			t.Errorf("action %q is missing from the published matrix", action)
 		}
 	}
-	roles := payload["event_roles"].([]any)
-	if len(roles) != 4 {
-		t.Fatalf("expected four event roles, got %v", roles)
+
+	platform := data["platform_roles"].(map[string]any)
+	for role, raw := range platform {
+		for _, name := range raw.([]any) {
+			action := authz.Action(name.(string))
+			if !authz.RoleAllows(domain.Role(role), action) {
+				t.Errorf("matrix says role %s may %s but the resolver refuses it", role, name)
+			}
+		}
+	}
+	event := data["event_roles"].(map[string]any)
+	for role, raw := range event {
+		parsed, err := domain.ParseEventRole(role)
+		if err != nil {
+			t.Errorf("matrix advertises an unknown event role %q", role)
+			continue
+		}
+		for _, name := range raw.([]any) {
+			action := authz.Action(name.(string))
+			if action == authz.ActionRubricReadOnly {
+				continue
+			}
+			if !authz.EventRoleAllows(parsed, action) {
+				t.Errorf("matrix says event role %s may %s but the resolver refuses it", role, name)
+			}
+		}
+	}
+
+	order := data["resolution_order"].([]any)
+	if len(order) < 5 {
+		t.Errorf("resolution order has %d steps, want the full policy", len(order))
+	}
+	resources := data["resources"].([]any)
+	if len(resources) == 0 {
+		t.Error("no resources published")
 	}
 }
 
