@@ -239,3 +239,54 @@ func TestPairwiseReportsADecisivePanelAsUnbounded(t *testing.T) {
 		t.Error("an unbounded result must carry a note explaining what to do instead")
 	}
 }
+
+// A panel that is not decisive must not be reported as decisive.
+//
+// The minimum-sentinal bug this covers was quiet: the search for the weakest
+// strength started at zero, and a Bradley-Terry strength is always positive, so
+// it never updated and the strongest/weakest ratio was infinite for every panel.
+// The warning fired unconditionally, which is worse than not having it, because
+// a reader learns to ignore it.
+func TestANonDecisivePanelIsNotReportedAsUnbounded(t *testing.T) {
+	reviews := []domain.Review{
+		// Two judges rank a > b > c. The third reverses the whole order, which is what
+		// puts cycles in the comparison graph: every project both wins and loses, so no
+		// strength ratio diverges and the estimate is finite.
+		{ID: "r1", EventID: "e", JudgeID: "j1", ProjectID: "a", Criteria: map[string]int{"q": 5}},
+		{ID: "r2", EventID: "e", JudgeID: "j1", ProjectID: "b", Criteria: map[string]int{"q": 3}},
+		{ID: "r3", EventID: "e", JudgeID: "j1", ProjectID: "c", Criteria: map[string]int{"q": 1}},
+		{ID: "r4", EventID: "e", JudgeID: "j2", ProjectID: "a", Criteria: map[string]int{"q": 5}},
+		{ID: "r5", EventID: "e", JudgeID: "j2", ProjectID: "b", Criteria: map[string]int{"q": 3}},
+		{ID: "r6", EventID: "e", JudgeID: "j2", ProjectID: "c", Criteria: map[string]int{"q": 1}},
+		{ID: "r7", EventID: "e", JudgeID: "j3", ProjectID: "a", Criteria: map[string]int{"q": 1}},
+		{ID: "r8", EventID: "e", JudgeID: "j3", ProjectID: "b", Criteria: map[string]int{"q": 3}},
+		{ID: "r9", EventID: "e", JudgeID: "j3", ProjectID: "c", Criteria: map[string]int{"q": 5}},
+	}
+	// A cycle is what keeps the maximum likelihood finite: every project both wins
+	// and loses, so no strength ratio diverges.
+	result, err := PairwiseConfigured(reviews, Weights{"q": 1}, DefaultPairwiseConfig())
+	if err != nil {
+		t.Fatalf("PairwiseConfigured() error = %v", err)
+	}
+	if result.Unbounded {
+		t.Errorf("a panel with a cycle was reported as decisive: %s", result.Note)
+	}
+	// And the sentinel itself: the spread of the reported strengths has to be
+	// within the threshold for the panel to be considered measurable.
+	var strongest, weakest = 0.0, 0.0
+	for i, entry := range result.Entries {
+		if i == 0 || entry.Strength > strongest {
+			strongest = entry.Strength
+		}
+		if i == 0 || entry.Strength < weakest {
+			weakest = entry.Strength
+		}
+	}
+	if weakest <= 0 {
+		t.Fatalf("a fitted strength is %v; the ratio test cannot be trusted", weakest)
+	}
+	if strongest/weakest > UnboundedRatio {
+		t.Errorf("strength spread %v exceeds the threshold %v, so the panel is genuinely decisive",
+			strongest/weakest, UnboundedRatio)
+	}
+}

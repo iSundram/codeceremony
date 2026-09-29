@@ -144,7 +144,27 @@ type PairwiseResult struct {
 	// project nobody compared has no strength estimate, and a strength of zero
 	// would be a fabrication.
 	ProjectsWithNoComparisons []string `json:"projects_with_no_comparisons"`
+	// Source records whether the fit came from verdicts judges answered directly
+	// or from comparisons inferred from rubric scores. A reader should not have
+	// to consult the documentation to know which kind of evidence they are
+	// looking at.
+	Source ComparisonSource `json:"source"`
+	// RecordedComparisons and DerivedComparisons break the total down, so a
+	// panel that answers some pairs directly and leaves the rest to the rubric
+	// says so in the response rather than in a footnote.
+	RecordedComparisons int `json:"recorded_comparisons"`
+	DerivedComparisons  int `json:"derived_comparisons"`
 }
+
+// ComparisonSource says what a fit was built from.
+type ComparisonSource string
+
+const (
+	// SourceDerived means every comparison was inferred from rubric scores.
+	SourceDerived ComparisonSource = "derived"
+	// SourceRecorded means the fit used verdicts judges answered directly.
+	SourceRecorded ComparisonSource = "recorded"
+)
 
 // PairwiseMethod is the identifier reported in the API and in JUDGING.md.
 const PairwiseMethod = "bradley-terry-mm"
@@ -154,7 +174,107 @@ func Pairwise(reviews []domain.Review, weights Weights) (PairwiseResult, error) 
 	return PairwiseConfigured(reviews, weights, DefaultPairwiseConfig())
 }
 
-// PairwiseConfigured fits the model with explicit parameters.
+// PairwiseRecorded fits the model to verdicts judges actually recorded.
+//
+// Recorded verdicts are used when they cover the same set of projects the
+// derived fit did. A partial recorded set is not blended in: dropping the
+// derived comparisons it does not cover would change the question being asked,
+// and the resulting ordering would no longer be comparable with the rubric
+// pipeline. Either way the response says which source was used, so a reader is
+// never left inferring it from the documentation.
+func PairwiseRecorded(reviews []domain.Review, comparisons []domain.Comparison, weights Weights) (PairwiseResult, error) {
+	derived, err := PairwiseConfigured(reviews, weights, DefaultPairwiseConfig())
+	if err != nil {
+		return derived, err
+	}
+	record, complete := tallyFromComparisons(comparisons, DefaultPairwiseConfig().WeightTie)
+	if !complete || !coversSameProjects(record, derived) {
+		return derived, nil
+	}
+	result := fitFromTally(record, DefaultPairwiseConfig())
+	result.Source = SourceRecorded
+	result.RecordedComparisons = result.TotalComparisons
+	result.DerivedComparisons = 0
+	return result, nil
+}
+
+// coversSameProjects reports whether a recorded tally ranks exactly the projects
+// the derived fit did. A set that is missing one would silently drop it.
+func coversSameProjects(record tally, result PairwiseResult) bool {
+	recorded := make(map[string]bool, len(record.played))
+	for id := range record.played {
+		recorded[id] = true
+	}
+	if len(recorded) != len(result.Entries) {
+		return false
+	}
+	for _, entry := range result.Entries {
+		if !recorded[entry.ProjectID] {
+			return false
+		}
+	}
+	return true
+}
+
+// tallyFromComparisons builds a head-to-head record from recorded verdicts.
+//
+// complete is false when the recorded set could not stand on its own: a project
+// nobody compared, or a verdict that is not one of the three defined answers. The
+// caller falls back to the derived fit rather than reporting a ranking built from
+// a partial picture, which would look complete and not be.
+func tallyFromComparisons(comparisons []domain.Comparison, tieWeight float64) (tally, bool) {
+	record := tally{
+		wins:     make(map[string]float64),
+		losses:   make(map[string]float64),
+		ties:     make(map[string]int),
+		meetings: make(map[pairKey]int),
+		played:   make(map[string]int),
+		reviewed: make(map[string]bool),
+		byJudge:  make(map[string]judgeComparison),
+	}
+	complete := true
+	for _, comparison := range comparisons {
+		left, right := comparison.Left, comparison.Right
+		if left == right || !comparison.Verdict.Valid() {
+			complete = false
+			continue
+		}
+		record.played[left]++
+		record.played[right]++
+		record.reviewed[left] = true
+		record.reviewed[right] = true
+
+		judgeRecord := record.byJudge[comparison.JudgeID]
+		judgeRecord.comparisons++
+		switch comparison.Verdict {
+		case domain.ComparisonLeftWins:
+			record.wins[left]++
+			record.losses[right]++
+			judgeRecord.wins++
+		case domain.ComparisonRightWins:
+			record.wins[right]++
+			record.losses[left]++
+			judgeRecord.losses++
+		case domain.ComparisonTied:
+			record.ties[left]++
+			record.ties[right]++
+			// A draw counts as half a win to each side, which is the standard
+			// handling and the reason the configuration carries a tie weight.
+			record.wins[left] += tieWeight
+			record.wins[right] += tieWeight
+			judgeRecord.ties++
+		}
+		record.byJudge[comparison.JudgeID] = judgeRecord
+		record.order = append(record.order, newPairKey(left, right))
+	}
+	for id := range record.reviewed {
+		if record.played[id] == 0 {
+			complete = false
+		}
+	}
+	return record, complete
+}
+
 func PairwiseConfigured(reviews []domain.Review, weights Weights, config PairwiseConfig) (PairwiseResult, error) {
 	config = config.withDefaults()
 	if _, _, err := validateWeights(weights); err != nil {
@@ -163,15 +283,31 @@ func PairwiseConfigured(reviews []domain.Review, weights Weights, config Pairwis
 
 	record := deriveTally(reviews, weights, config.WeightTie)
 
+	if len(record.order) == 0 {
+		// Reported rather than hidden behind a 500: an organizer asking for the
+		// pairwise view before any reviews exist should be told why it is empty.
+		return PairwiseResult{
+			Method: PairwiseMethod, MethodVersion: DefaultMethodVersion, Source: SourceDerived,
+		}, fmt.Errorf("no pairwise comparisons could be derived: no judge reviewed two projects on the same criteria")
+	}
+	result := fitFromTally(record, config)
+	result.Source = SourceDerived
+	result.DerivedComparisons = result.TotalComparisons
+	return result, nil
+}
+
+// fitFromTally turns a head-to-head record into the reported result.
+//
+// Both sources share this, which is the point: a derived comparison and a
+// recorded verdict are different evidence, but once they are in the tally they
+// are the same kind of datum, and two code paths would eventually disagree about
+// how a strength is computed.
+func fitFromTally(record tally, config PairwiseConfig) PairwiseResult {
 	result := PairwiseResult{
 		Method:           PairwiseMethod,
 		MethodVersion:    DefaultMethodVersion,
 		TotalComparisons: len(record.order),
 	}
-	if len(record.order) == 0 {
-		return result, fmt.Errorf("no pairwise comparisons could be derived: no judge reviewed two projects on the same criteria")
-	}
-
 	// Every project that took part needs a strength, including one that only
 	// ever lost, or it would be invisible in the output. Projects nobody
 	// compared are included too and reported separately, because a strength of
@@ -205,9 +341,15 @@ func PairwiseConfigured(reviews []domain.Review, weights Weights, config Pairwis
 			Ties:        record.ties[id],
 			Comparisons: record.played[id],
 		}
-		decided := entry.Wins + entry.Losses
+		// A tie contributes WeightTie to Wins, so computing the rate from the
+		// weighted totals would report an all-ties record as a 100% win rate.
+		// Subtracting the tie contribution leaves the decided comparisons, which
+		// is what a win rate is a proportion of. A record with no decided
+		// comparison leaves the rate null rather than dividing by zero.
+		decidedWins := entry.Wins - float64(entry.Ties)*config.WeightTie
+		decided := decidedWins + entry.Losses
 		if decided > 0 {
-			rate := entry.Wins / decided
+			rate := decidedWins / decided
 			entry.WinRate = &rate
 		}
 		entries = append(entries, entry)
@@ -233,25 +375,24 @@ func PairwiseConfigured(reviews []domain.Review, weights Weights, config Pairwis
 	result.Converged = converged
 
 	// A panel where somebody never lost, and somebody never won, has no finite
-	// maximum likelihood estimate. The strength ratios then grow without limit
-	// and any number reported for them is decided by the iteration budget
+	// maximum likelihood estimate: the strength ratio between them grows without
+	// limit, and any number reported for it is decided by the iteration budget
 	// rather than by the data.
-	strongest, weakest := math.Inf(1), 0.0
-	for _, entry := range entries {
-		if entry.Strength > strongest {
-			strongest = entry.Strength
-		}
-		if entry.Strength < weakest {
-			weakest = entry.Strength
-		}
-	}
-	if strongest/weakest > UnboundedRatio {
+	//
+	// This is detected from the tally rather than from the size of the fitted
+	// spread. A spread threshold is a proxy that fails in both directions: it does
+	// not fire for a genuinely decisive panel whose truncated fit happens to stay
+	// within the threshold, and it would fire for a well-determined panel whose fit
+	// ran long. The structural condition is exact, and it is what the note below
+	// describes.
+	if neverLost, neverWon := decisiveExtremes(record); neverLost != "" && neverWon != "" {
 		result.Unbounded = true
-		result.Note = "this panel is decisive: at least one project never lost and at least one never won, " +
-			"so the maximum likelihood strength has no finite value. The strengths below are a truncated fit, " +
-			"not estimates. Collect more comparisons, or use the rubric pipeline, which is bounded by construction."
+		result.Note = "this panel is decisive: " + neverLost + " never lost a comparison and " + neverWon +
+			" never won one, so the maximum likelihood strength has no finite value. The strengths below are a " +
+			"truncated fit, not estimates. Collect more comparisons, or use the rubric pipeline, which is " +
+			"bounded by construction."
 	}
-	return result, nil
+	return result
 }
 
 func sortPairwise(entries []PairwiseEntry) {
@@ -518,6 +659,31 @@ const UnboundedRatio = 1e4
 // unbounded strength ratio against the rest of the field and a division by zero
 // downstream.
 const MinStrength = 1e-6
+
+// decisiveExtremes reports the projects that never lost and never won, if any.
+//
+// A tie counts as neither: a project whose only comparisons were draws has not
+// beaten anyone, and treating it as unbeaten would flag a panel that is in fact
+// entirely undecided.
+func decisiveExtremes(record tally) (neverLost, neverWon string) {
+	for id, played := range record.played {
+		if played == 0 {
+			continue
+		}
+		wins := record.wins[id] - float64(record.ties[id])*defaultTieWeight
+		if record.losses[id] == 0 && wins > 0 && neverLost == "" {
+			neverLost = id
+		}
+		if wins == 0 && record.losses[id] > 0 && neverWon == "" {
+			neverWon = id
+		}
+	}
+	return neverLost, neverWon
+}
+
+// defaultTieWeight mirrors DefaultPairwiseConfig so the win count can be
+// recovered from the tally, which stores ties as half a win.
+const defaultTieWeight = 0.5
 
 // normalizeStrength fixes the scale indeterminacy by forcing the geometric mean
 // of the fitted strengths to 1, which makes them interpretable as "times as

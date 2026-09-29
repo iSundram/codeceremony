@@ -50,11 +50,16 @@ type Store struct {
 	submissionVersions map[string]domain.SubmissionVersion
 	duplicates         map[string]domain.DuplicateFlag
 	assignments        map[string]domain.Assignment
-	reviews            map[string]domain.Review
-	sessions           map[string]domain.Session
-	notifications      map[string]domain.Notification
-	auditEvents        map[string]domain.AuditEvent
-	grants             map[string]authz.Grant
+	// comparisons are recorded head-to-head verdicts, the first-class form of the
+	// pairwise question. They are kept alongside reviews rather than derived from
+	// them, because a recorded answer and an inferred one are not the same
+	// evidence and the estimator is told which it used.
+	comparisons   map[string]domain.Comparison
+	reviews       map[string]domain.Review
+	sessions      map[string]domain.Session
+	notifications map[string]domain.Notification
+	auditEvents   map[string]domain.AuditEvent
+	grants        map[string]authz.Grant
 
 	actionAudit actionAudit
 	// idempotency remembers the outcome of keyed writes so a retry cannot apply
@@ -103,6 +108,7 @@ func New(data seed.Data) *Store {
 		submissionVersions: make(map[string]domain.SubmissionVersion),
 		duplicates:         make(map[string]domain.DuplicateFlag, len(data.Duplicates)),
 		assignments:        make(map[string]domain.Assignment, len(data.Assignments)),
+		comparisons:        make(map[string]domain.Comparison, len(data.Comparisons)),
 		reviews:            make(map[string]domain.Review, len(data.Reviews)),
 		sessions:           make(map[string]domain.Session),
 		notifications:      make(map[string]domain.Notification, len(data.Notifications)),
@@ -187,6 +193,9 @@ func New(data seed.Data) *Store {
 	}
 	for _, assignment := range data.Assignments {
 		store.assignments[assignment.ID] = assignment
+	}
+	for _, comparison := range data.Comparisons {
+		store.comparisons[comparison.ID] = comparison
 	}
 	for _, review := range data.Reviews {
 		store.reviews[reviewKey(review.JudgeID, review.ProjectID)] = review

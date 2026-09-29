@@ -917,6 +917,100 @@ def test_write_safety(api: Client) -> None:
         check("an identical re-save keeps the ETag", repeat.header("etag") == review_etag, f"{review_etag} then {repeat.header('etag')}")
 
 
+def test_comparisons(api: Client) -> None:
+    """Recorded head-to-head verdicts, and the view built from them.
+
+    The pairwise estimator could already be reached over HTTP, but every
+    comparison it used was inferred from rubric scores. A verdict the judge
+    actually gave is a different kind of evidence, and this checks it survives the
+    round trip, respects the assignment rule, and reaches the ranking.
+    """
+    section("Recorded comparisons")
+    organizer = Client(api.base, TOKENS["organizer"])
+    judge = Client(api.base, TOKENS["judge_a"])
+
+    # Two projects the judge has been assigned but not reviewed.
+    assigned = organizer.post(
+        "/v1/organizer/assignments",
+        body={
+            "event_slug": FIXTURE_SLUG,
+            "judge_ids": ["jdg_24"],
+            "project_ids": ["prj_02", "prj_03"],
+            "strategy": "manual",
+        },
+    )
+    if assigned.status not in (200, 201):
+        check("an organizer can assign the judge two projects", False, f"got {assigned.status} {assigned.body[:140]}")
+        return
+    check("an organizer can assign the judge two projects", True)
+
+    recorded = judge.post(
+        f"/v1/events/{FIXTURE_SLUG}/comparisons",
+        body={"left": "prj_02", "right": "prj_03", "verdict": "left", "comment": "clearer problem"},
+    )
+    check("a judge can record a comparison", recorded.status == 201, f"got {recorded.status} {recorded.body[:140]}")
+    if recorded.status != 201:
+        return
+    body = recorded.json()["data"]
+    check("the verdict is attributed to the judge", body.get("judge_id") == "jdg_24", body.get("judge_id"))
+    check("the verdict is stored as given", body.get("verdict") == "left", body.get("verdict"))
+    check("the comparison carries an ETag", bool(recorded.header("etag")), repr(recorded.header("etag")))
+
+    # A judge may not compare a project they were not assigned.
+    unassigned = judge.post(
+        f"/v1/events/{FIXTURE_SLUG}/comparisons",
+        body={"left": "prj_02", "right": "prj_05", "verdict": "left"},
+    )
+    check("a judge cannot compare an unassigned project", unassigned.status == 403, f"got {unassigned.status}")
+
+    # A verdict has to be one of the three defined answers.
+    bad = judge.post(
+        f"/v1/events/{FIXTURE_SLUG}/comparisons",
+        body={"left": "prj_02", "right": "prj_03", "verdict": "better"},
+    )
+    check("an undefined verdict is refused", bad.status == 422, f"got {bad.status}")
+
+    # A judge sees their own verdicts; the organizer sees the panel's.
+    mine = judge.get(f"/v1/events/{FIXTURE_SLUG}/comparisons")
+    check("a judge can list their comparisons", mine.status == 200, f"got {mine.status}")
+    rows = mine.json().get("data", [])
+    check("the judge's own verdict is listed", len(rows) == 1, f"got {len(rows)}")
+    if rows:
+        check("the listing is their own", rows[0].get("judge_id") == "jdg_24", rows[0].get("judge_id"))
+
+    allrows = organizer.get(f"/v1/organizer/events/{FIXTURE_SLUG}/comparisons")
+    check("an organizer can list the panel's comparisons", allrows.status == 200, f"got {allrows.status}")
+
+    # Reversing the pair is one judge changing their mind, not a second answer.
+    again = judge.post(
+        f"/v1/events/{FIXTURE_SLUG}/comparisons",
+        body={"left": "prj_03", "right": "prj_02", "verdict": "right"},
+    )
+    check("re-answering the same pair is accepted", again.status == 201, f"got {again.status}")
+    check("re-answering reuses the row", again.json()["data"].get("id") == body.get("id"),
+          f"{body.get('id')} then {again.json()['data'].get('id')}")
+    after = judge.get(f"/v1/events/{FIXTURE_SLUG}/comparisons").json().get("data", [])
+    check("the pair is counted once", len(after) == 1, f"got {len(after)}")
+
+    # The view reports which kind of evidence it used.
+    view = organizer.get(f"/v1/organizer/pairwise?event_id={FIXTURE_EVENT}")
+    check("the pairwise view is reachable", view.status == 200, f"got {view.status}")
+    if view.status == 200:
+        data = view.json().get("data", {})
+        check("the view declares its evidence", data.get("source") in ("derived", "recorded"),
+              data.get("source"))
+        check("the view counts what it used", "recorded_comparisons" in data and "derived_comparisons" in data,
+              json.dumps(data)[:160])
+
+    # Withdrawal leaves the verdict gone but the audit intact.
+    withdrawn = organizer.request("DELETE", f"/v1/organizer/comparisons/{body['id']}")
+    check("a comparison can be withdrawn", withdrawn.status == 200, f"got {withdrawn.status}")
+    gone = judge.get(f"/v1/events/{FIXTURE_SLUG}/comparisons").json().get("data", [])
+    check("the withdrawn verdict is gone", len(gone) == 0, f"got {len(gone)}")
+    audit = organizer.get("/v1/audit/actions?action=comparison.withdrawn&limit=50")
+    check("the withdrawal is in the audit", "comparison.withdrawn" in audit.body, audit.body[:160])
+
+
 def test_durability(binary: str, data_dir: str, port: int) -> None:
     section("Durability across a restart")
     path = os.path.join(data_dir, "portal.json")
@@ -970,6 +1064,7 @@ def main() -> int:
         test_ballot(api)
         test_hardening(api)
         test_audit_and_grants(api)
+        test_comparisons(api)
         test_durability(binary, data_dir, port)
 
         if args.keep:

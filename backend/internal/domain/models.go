@@ -108,6 +108,54 @@ type Review struct {
 	UpdatedAt     time.Time      `json:"updated_at"`
 }
 
+// Comparison is one recorded head-to-head verdict.
+//
+// This is the first-class form of the pairwise question. The estimator in
+// internal/judging can also derive comparisons from rubric scores, but a derived
+// comparison is only as good as the assumption that a judge's 4 out of 5 on one
+// project and 3 out of 5 on another means they preferred the first. A recorded
+// verdict is the judge answering the question directly, and it is attributed,
+// timestamped and reversible, which a derived one is not.
+type Comparison struct {
+	ID      string `json:"id"`
+	EventID string `json:"event_id"`
+	JudgeID string `json:"judge_id"`
+	// Left and Right are the two projects compared. The verdict is stored on
+	// this pair as written rather than being normalised to a sorted pair, so
+	// that reversing a verdict is a visible change of mind rather than a
+	// silently different row.
+	Left      string            `json:"left"`
+	Right     string            `json:"right"`
+	Verdict   ComparisonVerdict `json:"verdict"`
+	Comment   string            `json:"comment,omitempty"`
+	CreatedAt time.Time         `json:"created_at"`
+	UpdatedAt time.Time         `json:"updated_at"`
+}
+
+// ComparisonVerdict is what the judge concluded.
+type ComparisonVerdict string
+
+const (
+	// ComparisonLeftWins means the judge preferred Left over Right.
+	ComparisonLeftWins ComparisonVerdict = "left"
+	// ComparisonRightWins means the judge preferred Right over Left.
+	ComparisonRightWins ComparisonVerdict = "right"
+	// ComparisonTied is a genuine draw. It is a real answer, not missing data:
+	// treating it as half a win is the standard handling and is why the
+	// estimator has a tie weight.
+	ComparisonTied ComparisonVerdict = "tie"
+)
+
+// Valid reports whether a verdict is one of the three defined answers.
+func (v ComparisonVerdict) Valid() bool {
+	switch v {
+	case ComparisonLeftWins, ComparisonRightWins, ComparisonTied:
+		return true
+	default:
+		return false
+	}
+}
+
 type Assignment struct {
 	ID         string             `json:"id"`
 	EventID    string             `json:"event_id"`

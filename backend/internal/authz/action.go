@@ -53,6 +53,9 @@ const (
 	ActionEventStaffManage Action = "event.staff_manage"
 	ActionPanelManage      Action = "panel.manage"
 	ActionJudgeConflict    Action = "panel.declare_conflict"
+	// A comparison is a first-class answer to "which of these two", recorded
+	// rather than inferred from rubric scores.
+	ActionCompareWrite Action = "comparison.write"
 
 	// Teams and membership.
 	ActionTeamCreate     Action = "team.create"
@@ -157,7 +160,9 @@ var allActions = []Action{
 	ActionSubmissionDelete, ActionSubmissionSetEligiblity,
 	ActionDuplicateScan, ActionDuplicateResolve,
 	ActionReviewWriteOwn, ActionReviewSubmit, ActionReviewReadOwn, ActionReviewReadPeer,
-	ActionReviewCompare, ActionReviewReopen, ActionAssignmentRead, ActionAssignmentCreate,
+	// A comparison is a first-class answer to "which of these two", recorded
+	// rather than inferred from rubric scores.
+	ActionCompareWrite, ActionReviewCompare, ActionReviewReopen, ActionAssignmentRead, ActionAssignmentCreate,
 	ActionAssignmentRevoke, ActionAssignmentBulk, ActionRubricCreate, ActionRubricUpdate,
 	ActionRubricPublish, ActionRubricArchive, ActionResultsRead, ActionResultsPublish, ActionProgressRead,
 	ActionDirectoryRead, ActionCommentRead, ActionEventDirectory,

@@ -8,18 +8,23 @@ import (
 )
 
 type Data struct {
-	Users           []domain.User
-	JudgeProfiles   []domain.JudgeProfile
-	Events          []domain.Event
-	Tracks          []domain.Track
-	Prizes          []domain.Prize
-	Profiles        []domain.UserProfile
-	Questions       []domain.HackathonQuestion
-	Milestones      []domain.HackathonMilestone
-	Hosts           []domain.HackathonHost
-	JudgeRoster     []domain.JudgeRosterEntry
-	Invites         []domain.TeamInvite
-	Participations  []domain.Participation
+	Users          []domain.User
+	JudgeProfiles  []domain.JudgeProfile
+	Events         []domain.Event
+	Tracks         []domain.Track
+	Prizes         []domain.Prize
+	Profiles       []domain.UserProfile
+	Questions      []domain.HackathonQuestion
+	Milestones     []domain.HackathonMilestone
+	Hosts          []domain.HackathonHost
+	JudgeRoster    []domain.JudgeRosterEntry
+	Invites        []domain.TeamInvite
+	Participations []domain.Participation
+	// Comparisons are recorded head-to-head verdicts. Empty in the built-in seed
+	// on purpose: the estimator derives what it can from the reviews, and a
+	// fixture that shipped comparisons would hide that derivation from anyone
+	// testing the endpoint.
+	Comparisons     []domain.Comparison
 	Activity        []domain.ActivityEntry
 	EventStaff      []domain.EventStaff
 	MailPreferences []domain.MailPreferences

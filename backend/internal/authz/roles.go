@@ -53,7 +53,7 @@ var RoleDefaults = map[domain.Role][]Action{
 	domain.RoleJudge: {
 		ActionEventRead,
 		ActionSubmissionRead,
-		ActionReviewWriteOwn,
+		ActionReviewWriteOwn, ActionCompareWrite,
 		ActionReviewSubmit,
 		ActionReviewReadOwn,
 		ActionReviewCompare,

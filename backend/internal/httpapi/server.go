@@ -245,6 +245,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /v1/events/{slug}/submissions", s.requireAction(authz.ActionSubmissionCreate, s.createSubmission))
 	mux.Handle("GET /v1/judge/scores", s.requireAction(authz.ActionReviewReadOwn, s.judgeScores))
 	mux.Handle("PUT /v1/judge/projects/{projectID}/review", s.requireAction(authz.ActionReviewWriteOwn, s.saveReview))
+	mux.Handle("DELETE /v1/organizer/comparisons/{comparisonID}", s.requireAction(authz.ActionResultsRead, s.deleteComparison))
 	mux.Handle("GET /v1/submissions/{projectID}", s.requireAction(authz.ActionSubmissionRead, s.submissionDetail))
 	mux.Handle("PATCH /v1/submissions/{projectID}", s.requireAction(authz.ActionSubmissionUpdateOwn, s.editSubmission))
 	mux.Handle("POST /v1/submissions/{projectID}/submit", s.requireAction(authz.ActionSubmissionSubmit, s.submitRevision))
@@ -269,6 +270,12 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/organizer/reviews", s.requireAction(authz.ActionReviewReadPeer, s.organizerReviews))
 	mux.Handle("GET /v1/organizer/results", s.requireAction(authz.ActionResultsRead, s.results))
 	mux.Handle("GET /v1/organizer/pairwise", s.requireAction(authz.ActionResultsRead, s.pairwise))
+	// Recorded comparisons. The organizer listing is a separate route from the
+	// judge's own, so the two audiences are separated by the authorization gate
+	// rather than by a branch in the handler.
+	mux.Handle("GET /v1/events/{slug}/comparisons", s.requireAction(authz.ActionCompareWrite, s.listComparisons))
+	mux.Handle("GET /v1/organizer/events/{slug}/comparisons", s.requireAction(authz.ActionResultsRead, s.listComparisons))
+	mux.Handle("POST /v1/events/{slug}/comparisons", s.requireAction(authz.ActionCompareWrite, s.recordComparison))
 	mux.Handle("GET /v1/organizer/export.csv", s.requireAction(authz.ActionExportCSV, s.exportCSV))
 	mux.Handle("GET /v1/organizer/export", s.requireAction(authz.ActionExportFull, s.exportEvent))
 	mux.Handle("POST /v1/organizer/import", s.requireAction(authz.ActionImportApply, s.importEvent))

@@ -63,6 +63,7 @@ type Snapshot struct {
 	Versions       []domain.SubmissionVersion   `json:"submission_versions"`
 	Duplicates     []domain.DuplicateFlag       `json:"duplicate_flags"`
 	Assignments    []domain.Assignment          `json:"assignments"`
+	Comparisons    []domain.Comparison          `json:"comparisons"`
 	Reviews        []domain.Review              `json:"reviews"`
 	Comments       []domain.Comment             `json:"comments"`
 	Reports        []domain.CommentReport       `json:"comment_reports"`
@@ -111,6 +112,7 @@ func (s *Store) Snapshot() Snapshot {
 		Versions:       make([]domain.SubmissionVersion, 0, len(s.submissionVersions)),
 		Duplicates:     make([]domain.DuplicateFlag, 0, len(s.duplicates)),
 		Assignments:    make([]domain.Assignment, 0, len(s.assignments)),
+		Comparisons:    make([]domain.Comparison, 0, len(s.comparisons)),
 		Reviews:        make([]domain.Review, 0, len(s.reviews)),
 		Comments:       make([]domain.Comment, 0, len(s.comments)),
 		Reports:        make([]domain.CommentReport, 0, len(s.reports)),
@@ -183,6 +185,9 @@ func (s *Store) Snapshot() Snapshot {
 	for _, assignment := range s.assignments {
 		snapshot.Assignments = append(snapshot.Assignments, assignment)
 	}
+	for _, comparison := range s.comparisons {
+		snapshot.Comparisons = append(snapshot.Comparisons, comparison)
+	}
 	for _, review := range s.reviews {
 		snapshot.Reviews = append(snapshot.Reviews, cloneReview(review))
 	}
@@ -229,6 +234,7 @@ func (s *Store) Snapshot() Snapshot {
 	snapshot.Versions = sortBy(snapshot.Versions, func(v domain.SubmissionVersion) string { return v.ID })
 	snapshot.Duplicates = sortBy(snapshot.Duplicates, func(d domain.DuplicateFlag) string { return d.ID })
 	snapshot.Assignments = sortBy(snapshot.Assignments, func(a domain.Assignment) string { return a.ID })
+	snapshot.Comparisons = sortBy(snapshot.Comparisons, func(c domain.Comparison) string { return c.ID })
 	snapshot.Reviews = sortBy(snapshot.Reviews, func(r domain.Review) string { return reviewKey(r.JudgeID, r.ProjectID) })
 	snapshot.Comments = sortBy(snapshot.Comments, func(c domain.Comment) string { return c.ID })
 	snapshot.Reports = sortBy(snapshot.Reports, func(r domain.CommentReport) string { return r.ID })
@@ -309,6 +315,7 @@ func (s *Store) Restore(snapshot Snapshot) error {
 	s.submissionVersions = make(map[string]domain.SubmissionVersion, len(snapshot.Versions))
 	s.duplicates = make(map[string]domain.DuplicateFlag, len(snapshot.Duplicates))
 	s.assignments = make(map[string]domain.Assignment, len(snapshot.Assignments))
+	s.comparisons = make(map[string]domain.Comparison, len(snapshot.Comparisons))
 	s.reviews = make(map[string]domain.Review, len(snapshot.Reviews))
 	s.notifications = make(map[string]domain.Notification, len(snapshot.Notifications))
 	s.auditEvents = make(map[string]domain.AuditEvent, len(snapshot.AuditEvents))
@@ -409,6 +416,9 @@ func (s *Store) Restore(snapshot Snapshot) error {
 	}
 	for _, review := range snapshot.Reviews {
 		s.reviews[reviewKey(review.JudgeID, review.ProjectID)] = cloneReview(review)
+	}
+	for _, comparison := range snapshot.Comparisons {
+		s.comparisons[comparison.ID] = comparison
 	}
 	for _, notification := range snapshot.Notifications {
 		s.notifications[notification.ID] = notification
