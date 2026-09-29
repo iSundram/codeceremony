@@ -200,3 +200,61 @@
   color: var(--color-text-secondary);
   max-width: 42ch;
 }
+
+/* The sign-in page. It is the one surface outside the app shell, because a
+ * signed-out viewer has no sidebar to navigate, so it establishes the brand on
+ * its own instead of rendering an empty shell. */
+.auth-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 480px);
+  gap: var(--space-16);
+  align-items: start;
+  max-width: var(--shell-content-max);
+  margin: 0 auto;
+  padding: var(--space-16) 0;
+}
+
+.auth-layout__logo {
+  width: 100%;
+  max-width: 320px;
+  height: auto;
+  margin-bottom: var(--space-8);
+}
+
+.auth-layout__title {
+  font: var(--text-heading-1);
+  text-wrap: balance;
+}
+
+.auth-layout__lede {
+  font: var(--text-body-large);
+  color: var(--color-text-secondary);
+  margin-top: var(--space-3);
+  margin-bottom: var(--space-8);
+}
+
+.auth-layout__points .list__item {
+  align-items: flex-start;
+  padding: var(--space-2) 0;
+  border-bottom: 0;
+  color: var(--color-text-secondary);
+  font: var(--text-body);
+}
+
+.auth-layout__points svg {
+  flex: 0 0 auto;
+  color: var(--color-accent);
+  margin-top: 3px;
+}
+
+@media (max-width: 1023px) {
+  .auth-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-8);
+    padding: var(--space-8) 0;
+  }
+
+  .auth-layout__points {
+    display: none;
+  }
+}
