@@ -13,7 +13,17 @@ type User struct {
 	Locale       string       `json:"locale,omitempty"`
 	Role         Role         `json:"role"`
 	State        AccountState `json:"state"`
-	PasswordHash string       `json:"-"`
+	// PasswordHash is a bcrypt hash and is persisted, which makes the data file
+	// something to protect like any other credential store. It used to be
+	// `json:"-"` and blanked in Snapshot, on the reasoning that a backup is the
+	// thing most likely to be copied around. The cost of that was that every
+	// restart destroyed every password in the portal, leaving the fixed public
+	// seed tokens as the only credentials that still worked — a worse outcome
+	// than a salted, one-way hash sitting in a file the operator already has to
+	// protect. The plaintext is never stored. The loader refuses a value that is
+	// not a bcrypt hash, so a plaintext password in a data file is an error
+	// rather than a silently trusted credential.
+	PasswordHash string       `json:"password_hash,omitempty"`
 	CreatedAt    time.Time    `json:"created_at"`
 }
 

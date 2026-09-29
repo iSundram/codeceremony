@@ -76,7 +76,13 @@ func idempotencyScope(actorID, key string) string {
 // against a different payload would silently return the first payload's
 // response, which is the worst possible outcome: the caller believes their
 // second, different request succeeded.
-func FingerprintRequest(method, path string, body []byte) string {
+// FingerprintRequest identifies a request for the idempotency table.
+//
+// ifMatch is part of the identity because a precondition is part of what the
+// client asked for. Left out, a client that re-read the ETag a 412 carried and
+// retried with it — exactly what the 412 told it to do — produced a fingerprint
+// identical to the refused attempt, and was answered with the refusal again.
+func FingerprintRequest(method, path string, body []byte, ifMatch string) string {
 	// A hash.Hash rather than a [32]byte, because the parts are written
 	// incrementally. The NUL separators keep the parts unambiguous: without them
 	// ("POST", "/ab") and ("POSTA", "/b") would fingerprint identically.
@@ -85,6 +91,8 @@ func FingerprintRequest(method, path string, body []byte) string {
 	_, _ = digest.Write([]byte("\x00"))
 	_, _ = digest.Write([]byte(path))
 	_, _ = digest.Write([]byte("\x00"))
+	_, _ = digest.Write([]byte("\x00"))
+	_, _ = digest.Write([]byte(ifMatch))
 	_, _ = digest.Write(body)
 	return hex.EncodeToString(digest.Sum(nil))
 }

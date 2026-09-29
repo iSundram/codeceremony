@@ -11,12 +11,8 @@ import (
 )
 
 func (s *Server) listRubrics(w http.ResponseWriter, r *http.Request) {
-	eventID := r.URL.Query().Get("event_id")
-	if eventID == "" {
-		eventID = "evt_01"
-	}
-	if _, err := s.store.EventByID(eventID); err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "event not found")
+	eventID, ok := s.queryEvent(w, r)
+	if !ok {
 		return
 	}
 	rubrics := s.store.RubricsForEvent(eventID)
@@ -35,7 +31,8 @@ func (s *Server) listRubrics(w http.ResponseWriter, r *http.Request) {
 func (s *Server) activeRubric(w http.ResponseWriter, r *http.Request) {
 	eventID := strings.TrimSpace(r.URL.Query().Get("event_id"))
 	if eventID == "" {
-		eventID = "evt_01"
+		writeError(w, http.StatusBadRequest, "invalid_request", "event_id or event_slug is required")
+		return
 	}
 	if _, err := s.store.EventByID(eventID); err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "event not found")
@@ -82,7 +79,8 @@ func (s *Server) createRubric(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if request.EventID == "" {
-		request.EventID = "evt_01"
+		writeError(w, http.StatusBadRequest, "invalid_request", "event_id is required")
+		return
 	}
 	rubric, err := s.store.CreateRubric(request.rubric(principal.UserID))
 	if err != nil {

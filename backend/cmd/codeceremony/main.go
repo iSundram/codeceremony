@@ -100,9 +100,33 @@ func run() {
 	}
 	restored, err := journal.Restore()
 	if err != nil {
-		logger.Error("could not read the data directory, starting from the seed instead",
-			"path", journal.Path(), "error", err)
+		// A snapshot that cannot be read is not an empty snapshot. Coming up
+		// anyway meant the first journal tick overwrote whatever was there with
+		// seed data, so a truncated or version-mismatched file destroyed the
+		// organizer's state irrecoverably and then reported a healthy boot.
+		// DATA_DIR is the one place this portal keeps anything.
+		logger.Error("could not read the data file; refusing to start rather than overwrite it",
+			"path", journal.Path(), "error", err,
+			"hint", "move the file aside to start fresh, or restore it from a backup")
+		os.Exit(1)
 	}
+	if restored {
+		// A restore that produced no usable password hash is a portal nobody can
+		// sign in to, and the symptom is a login form that always fails, which
+		// looks like a bug in the form. Say it at boot instead.
+		withHash, withoutHash := portal.AccountCredentialHealth()
+		if withHash == 0 && withoutHash > 0 {
+			logger.Error("the restored data file has no password hashes, so no account can sign in",
+				"users", withoutHash,
+				"hint", "this file was written by a build that did not persist credentials; accounts must be recreated")
+			os.Exit(1)
+		}
+		if withoutHash > 0 {
+			logger.Warn("some restored accounts have no password hash and cannot sign in",
+				"without_hash", withoutHash, "with_hash", withHash)
+		}
+	}
+	seeded := !restored
 	if !restored {
 		portal.SeedFrom(bootData(cfg, passwordHash, logger))
 	} else {
@@ -152,7 +176,7 @@ func run() {
 	go journal.Run(shutdownContext.Done())
 	logger.Info("CodeCeremony API listening",
 		"address", cfg.HTTPAddr, "environment", cfg.Environment,
-		"data_file", journal.Path(), "restored", restored, "seeded", cfg.SeedDemoData)
+		"data_file", journal.Path(), "restored", restored, "seeded", seeded)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Error("server stopped unexpectedly", "error", err)
 		os.Exit(1)
@@ -166,18 +190,30 @@ func run() {
 // seed, so a clone with the file absent is runnable rather than broken.
 func bootData(cfg config.Config, passwordHash string, logger *slog.Logger) seed.Data {
 	if cfg.FixturesPath == "" {
+		if !cfg.SeedDemoData {
+			// The operator turned the demo off and pointed at no data of their
+			// own, so the portal starts with nothing in it. That is the
+			// intended reading of the variable, and the alternative — seeding
+			// 125 accounts with a published password anyway — is what made
+			// SEED_DEMO_DATA=false a lie.
+			logger.Info("no fixtures file and demo data disabled, starting empty",
+				"hint", "set FIXTURES_PATH to the shared fixtures.json, or SEED_DEMO_DATA=true for the built-in demo")
+			return seed.WithDemoEvent(seed.Empty(passwordHash), time.Now())
+		}
 		logger.Warn("no fixtures file configured, seeding the built-in demo data only",
 			"hint", "set FIXTURES_PATH to the shared fixtures.json")
 		return seed.WithDemoEvent(seed.Default(passwordHash), time.Now())
 	}
 	data, err := fixtures.Load(cfg.FixturesPath, passwordHash)
 	if err != nil {
-		// A corrupt or missing fixture file must not stop the portal coming up:
-		// an organizer needs a working portal to debug, and the error is on
-		// stderr where it will be seen.
-		logger.Error("could not load fixtures, falling back to the built-in seed",
-			"path", cfg.FixturesPath, "error", err)
-		return seed.WithDemoEvent(seed.Default(passwordHash), time.Now())
+		// Falling back to the built-in seed here was a well-meant attempt not to
+		// block an operator with a working portal to debug, and it had the
+		// opposite effect: a truncated or schema-drifted fixtures file produced
+		// a portal that came up healthy, served four projects instead of
+		// forty-one, and looked like a data bug for the rest of the event. The
+		// operator named this file; if it cannot be read, that is the answer.
+		logger.Error("could not load the configured fixtures file", "path", cfg.FixturesPath, "error", err)
+		os.Exit(1)
 	}
 	logger.Info("loaded shared fixtures",
 		"path", cfg.FixturesPath,

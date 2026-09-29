@@ -31,7 +31,8 @@ func (s *Server) comparisonEvent(w http.ResponseWriter, r *http.Request) (domain
 	}
 	eventID := strings.TrimSpace(r.URL.Query().Get("event_id"))
 	if eventID == "" {
-		eventID = "evt_01"
+		writeError(w, http.StatusBadRequest, "invalid_request", "event_id or event_slug is required")
+		return domain.Event{}, false
 	}
 	event, err := s.store.EventByID(eventID)
 	if err != nil {

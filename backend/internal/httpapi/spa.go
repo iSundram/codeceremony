@@ -16,11 +16,11 @@ import (
 // second process: the one-command rule holds, and `docker compose up` needs a
 // network only while the image is built, never to run the portal.
 //
-// When the directory is absent — which is the case for `go test ./...` on a
-// checkout where the frontend has not been built — the portal still serves the
-// JSON API and the legacy server-rendered pages. That is deliberate: the backend
-// must be runnable and testable without a Node toolchain, and a build step that
-// gates the API would couple them.
+// A `.gitkeep` is tracked inside the directory precisely so that this embed
+// pattern always matches. Without it, `go:embed all:webassets/spa` is a
+// compile error on a fresh clone, which takes down `go build`, `go vet` and
+// `go test ./...` for a contributor who has never run the frontend build. An
+// absent build must degrade the served content, never the build of the package.
 //
 //go:embed all:webassets/spa
 var spaAssets embed.FS
@@ -46,12 +46,27 @@ func (s *Server) registerSPA(mux *routeMux) {
 		return
 	}
 
-	assets := http.FileServer(http.FS(spaAssets))
+	// The file server has to be rooted at the build directory, not at the embed
+	// root. http.FS(spaAssets) resolves a request for /assets/app.js against the
+	// embed path "assets/app.js", which does not exist — the file is at
+	// "webassets/spa/assets/app.js" — so every hashed bundle URL 404s and the
+	// portal serves a shell that never mounts, with no error anywhere a reader
+	// would look. Rooting the server with fs.Sub is what makes the URLs in
+	// index.html resolve.
+	buildFS, err := fs.Sub(spaAssets, spaRoot)
+	if err != nil {
+		// Unreachable while spaBuilt() is true, but a silent nil here would
+		// become a nil-pointer panic on the first asset request.
+		s.logger.Warn("the staged frontend build could not be mounted", "error", err)
+		return
+	}
+	assets := http.FileServer(http.FS(buildFS))
 
 	mux.Handle("GET /assets/{path...}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Hashed filenames mean an immutable asset is safe, and index.html must
 		// not be cached or a deploy would leave a stale shell in every browser.
-		if strings.HasPrefix(r.PathValue("path"), "index-") {
+		// The pattern captures "assets/<name>", so the name is the last segment.
+		if strings.HasPrefix(path.Base(r.PathValue("path")), "index-") {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		}
 		assets.ServeHTTP(w, r)
@@ -107,16 +122,24 @@ func (s *Server) registerSPA(mux *routeMux) {
 // clientRoute serves index.html for a client-side route and 404s for a missing
 // asset.
 //
-// The extension test is the whole point. /organizer/audit has no extension and
-// is a client route; /assets/missing-BADHASH.js has one and is a broken build.
-// Answering the second with HTML and a 200 produces a page that fails in the
-// console with a syntax error on <!doctype, which is far harder to trace than a
-// 404 in the network panel.
+// Two exclusions keep the API honest. The extension test is the point of the
+// file branch: /organizer/audit has no extension and is a client route;
+// /assets/missing-BADHASH.js has one and is a broken build. Answering the second
+// with HTML and a 200 produces a page that fails in the console with a syntax
+// error on <!doctype, which is far harder to trace than a 404 in the network
+// panel. The namespace test is the other half: this handler is a catch-all, so
+// without it an unknown /v1/... path is answered with the app shell and a 200,
+// and a client that does response.json() on it throws a bare SyntaxError it
+// cannot classify. A missing API route is a JSON 404.
 func (s *Server) clientRoute(index func(http.ResponseWriter)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rest := strings.TrimPrefix(r.URL.Path, "/")
 		if rest == "" {
 			index(w)
+			return
+		}
+		if first, _, _ := strings.Cut(rest, "/"); first == "v1" {
+			writeError(w, http.StatusNotFound, "not_found", "no such endpoint")
 			return
 		}
 		if path.Ext(rest) != "" {

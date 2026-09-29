@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/iSundram/codeceremony/backend/internal/auth"
+	"github.com/iSundram/codeceremony/backend/internal/authz"
 	"github.com/iSundram/codeceremony/backend/internal/domain"
 )
 
@@ -56,12 +57,8 @@ func (s *Server) organizerAssignments(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "authentication is required")
 		return
 	}
-	eventID := r.URL.Query().Get("event_id")
-	if eventID == "" {
-		eventID = "evt_01"
-	}
-	if _, err := s.store.EventByID(eventID); err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "event not found")
+	eventID, ok := s.queryEvent(w, r)
+	if !ok {
 		return
 	}
 	staff := s.isStaff(r)
@@ -92,12 +89,8 @@ func (s *Server) judgeAssignments(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "authentication is required")
 		return
 	}
-	eventID := r.URL.Query().Get("event_id")
-	if eventID == "" {
-		eventID = "evt_01"
-	}
-	if _, err := s.store.EventByID(eventID); err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "event not found")
+	eventID, ok := s.queryEvent(w, r)
+	if !ok {
 		return
 	}
 	views := s.assignmentViews(eventID, principal.UserID, false)
@@ -331,6 +324,12 @@ func (s *Server) revokeAssignment(w http.ResponseWriter, r *http.Request) {
 	reason := r.URL.Query().Get("reason")
 	if strings.TrimSpace(reason) == "" {
 		reason = "revoked_by_organizer"
+	}
+	// Second fence. The route has no event in its path, so the gate resolved
+	// whatever event the caller named in ?event_id= — and the assignment being
+	// revoked can belong to a different one. See authorizeRecordEvent.
+	if !s.authorizeRecordEvent(w, r, authz.ActionAssignmentRevoke, assignment.EventID) {
+		return
 	}
 	if err := s.store.RevokeAssignment(assignmentID, reason); err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "assignment not found")

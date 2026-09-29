@@ -317,7 +317,20 @@ func (s *Server) recordActivity(r *http.Request, actorID string, category domain
 	_ = entry
 }
 
+// parseQueryInt reads a count from the query string, bounded to [1, max].
+//
+// The bounds are the whole point. The parsed value used to be returned as-is and
+// then used as a make() capacity, so ?limit=99999999999 made the process attempt
+// a hundred-gigabyte allocation and die with an unrecoverable out-of-memory —
+// not a 500, because there is no recovering from that, the runtime does not come
+// back. One request, from any caller who can reach the route, took the portal
+// down. A negative value panicked in make for the same reason.
+//
+// A caller asking for more than the cap gets the cap. Refusing the request
+// would be more honest, but the cap is a safety property and silently serving
+// fewer rows than asked for is the conventional reading of a limit.
 func parseQueryInt(r *http.Request, key string, fallback int) int {
+	const max = 500
 	value := strings.TrimSpace(r.URL.Query().Get(key))
 	if value == "" {
 		return fallback
@@ -325,6 +338,12 @@ func parseQueryInt(r *http.Request, key string, fallback int) int {
 	parsed, err := strconv.Atoi(value)
 	if err != nil {
 		return fallback
+	}
+	if parsed < 1 {
+		return 1
+	}
+	if parsed > max {
+		return max
 	}
 	return parsed
 }

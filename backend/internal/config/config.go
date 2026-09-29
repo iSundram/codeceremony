@@ -35,9 +35,14 @@ type Config struct {
 	MailInterval           int
 	MailBatchSize          int
 	MailMaxAttempts        int
-	DataDir                string
-	FixturesPath           string
-	PersistInterval        time.Duration
+	// MailParallelism is how many sends one dispatch tick runs at once. It
+	// exists because a single unreachable endpoint used to hold the whole
+	// batch: with a fifteen second dial timeout, twenty queued messages took
+	// five minutes to discover that the first one was dead.
+	MailParallelism int
+	DataDir         string
+	FixturesPath    string
+	PersistInterval time.Duration
 }
 
 const defaultSeedPassword = "codeceremony-dev"
@@ -65,6 +70,7 @@ func Load() (Config, error) {
 		MailInterval:    10,
 		MailBatchSize:   20,
 		MailMaxAttempts: 4,
+		MailParallelism: 4,
 	}
 
 	if raw := strings.TrimSpace(os.Getenv("SEED_DEMO_DATA")); raw != "" {
@@ -123,20 +129,56 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("SMTP_ENCRYPTION must be none, starttls, or tls")
 	}
 
+	// APP_ENV is a set of switches, so an unrecognised value has to be refused
+	// rather than treated as "not production". It used to be compared with
+	// EqualFold against the single string "production", which meant APP_ENV=prod
+	// — one character of the most consequential variable in the file — silently
+	// disabled every guard rail below and logged environment=prod.
+	switch strings.ToLower(strings.TrimSpace(cfg.Environment)) {
+	case "development", "test", "production":
+	default:
+		return Config{}, fmt.Errorf("APP_ENV must be development, test or production, got %q", cfg.Environment)
+	}
+	cfg.Environment = strings.ToLower(strings.TrimSpace(cfg.Environment))
+
 	if strings.TrimSpace(cfg.HTTPAddr) == "" {
 		return Config{}, fmt.Errorf("HTTP_ADDR must not be empty")
 	}
 	if strings.TrimSpace(cfg.SessionSecret) == "" {
 		return Config{}, fmt.Errorf("SESSION_SECRET must not be empty")
 	}
-	if cfg.Environment == "production" && cfg.SessionSecret == "codeceremony-local-development-secret-change-me" {
+	if cfg.IsProduction() && cfg.SessionSecret == "codeceremony-local-development-secret-change-me" {
 		return Config{}, fmt.Errorf("SESSION_SECRET must be changed in production")
 	}
-	// An audit chain signed with a predictable key is not tamper evident, it is
-	// only tamper resistant against a careless operator. Falling back to the
-	// session secret is deliberate, and is why the fallback is checked here
+	// A one-character secret passed the equality check above and was then used
+	// to derive the audit key, so the audit chain was forgeable by anyone who
+	// guessed it. Length is the cheap check that catches the realistic mistake.
+	if cfg.IsProduction() && len(cfg.SessionSecret) < 32 {
+		return Config{}, fmt.Errorf("SESSION_SECRET must be at least 32 characters in production, got %d", len(cfg.SessionSecret))
+	}
+	// SESSION_TTL_HOURS was only checked for >= 1, and the value is multiplied
+	// out into a time.Duration at boot. 9223372036854775807 hours overflowed to
+	// -1h0m0s, so every session minted by that portal expired the instant it
+	// was issued and only the seeded long-lived tokens still worked.
+	if cfg.SessionTTLHours < 1 || cfg.SessionTTLHours > 24*365 {
+		return Config{}, fmt.Errorf("SESSION_TTL_HOURS must be between 1 and %d hours", 24*365)
+	}
+	// The audit chain is signed with a key derived from AUDIT_SECRET. Falling
+	// back to the session secret is convenient in development, where one
+	// variable is nicer than two, and it is why the fallback is checked here
 	// rather than left to fail quietly at verification time.
+	//
+	// It is not acceptable in production, and the previous handling was a
+	// warning. A leaked session secret — the one secret most likely to leak,
+	// because it is the one operators paste into compose files — then also
+	// bought the ability to forge audit history, which is exactly the property
+	// the chain exists to have. A warning is not a control, so production
+	// refuses to boot without its own key.
 	if strings.TrimSpace(cfg.AuditSecret) == "" {
+		if cfg.IsProduction() {
+			return Config{}, fmt.Errorf(
+				"AUDIT_SECRET must be set in production: deriving the audit key from SESSION_SECRET means a leaked session secret can forge audit history")
+		}
 		cfg.AuditSecret = cfg.SessionSecret
 		// No logger is available here, so the fallback is surfaced through the
 		// effective value, which the boot log already prints.
@@ -144,15 +186,20 @@ func Load() (Config, error) {
 	}
 	// Seeding mints fixed, publicly documented session tokens for accounts that
 	// hold organizer and admin rights, and hashes one shared password. That is
-	// correct for a self-hosted demo and indefensible in production, so opting
-	// in there requires replacing the shared password as well.
+	// correct for a self-hosted demo and indefensible in production.
+	//
+	// The password is the smaller half of the problem. The tokens are literal
+	// constants in the repository and in .dogfood.toml, valid for a hundred
+	// years, so requiring a private SEED_PASSWORD in production bought nothing:
+	// a portal configured that way still handed every anonymous visitor an admin
+	// session on the first request. Production therefore refuses to seed at all,
+	// and the token table is not something a password can protect.
 	if cfg.IsProduction() && cfg.SeedDemoData {
-		if cfg.SeedPassword == defaultSeedPassword {
-			return Config{}, fmt.Errorf("SEED_PASSWORD must be set to a private value before SEED_DEMO_DATA can be enabled in production")
-		}
-		if len(cfg.SeedPassword) < 12 {
-			return Config{}, fmt.Errorf("SEED_PASSWORD must be at least 12 characters")
-		}
+		return Config{}, fmt.Errorf(
+			"SEED_DEMO_DATA cannot be enabled in production: it mints fixed, publicly documented session tokens for organizer and admin accounts")
+	}
+	if cfg.SeedPassword != "" && len(cfg.SeedPassword) < 12 && !cfg.SeedDemoData {
+		return Config{}, fmt.Errorf("SEED_PASSWORD must be at least 12 characters")
 	}
 	if cfg.AllowedOrigin == "" {
 		cfg.AllowedOrigin = "http://localhost:3000"

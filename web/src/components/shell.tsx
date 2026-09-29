@@ -114,11 +114,15 @@ export function TopBar({
       <IconButton
         icon="menu"
         label="Open navigation"
-        className="topbar__menu"
+        // §6.3 allows a navigation trigger in the top bar and nothing else, and
+        // forbids a second navigation system: the stylesheet hides this on every
+        // width where the sidebar is persistent, so it is a mobile affordance
+        // only. The class is the one shell.css already keys that on.
+        className="topbar__nav-trigger"
         onClick={onOpenDrawer}
       />
       <div className="topbar__context">
-        {breadcrumb ? <div className="topbar__crumbs">{breadcrumb}</div> : null}
+        {breadcrumb ? <div className="topbar__crumb">{breadcrumb}</div> : null}
         <h1 className="topbar__title">{title}</h1>
       </div>
       <div className="topbar__spacer" />
@@ -262,7 +266,7 @@ export function PageHead({
 }) {
   return (
     <div className="page-head">
-      <div>
+      <div className="page-head__text">
         <h2 className="page-head__title">{title}</h2>
         {lede ? <p className="page-head__lede">{lede}</p> : null}
       </div>

@@ -14,7 +14,7 @@ func TestIdempotencyStoreOutcomes(t *testing.T) {
 	portal := New(seed.Data{})
 	actor := "usr_participant"
 	const key = "store-key"
-	print := FingerprintRequest("POST", "/v1/x", nil)
+	print := FingerprintRequest("POST", "/v1/x", nil, "")
 
 	if outcome, _, _ := portal.BeginIdempotent(actor, key, print); outcome != IdempotencyNew {
 		t.Fatalf("a fresh key reported outcome %d, want IdempotencyNew", outcome)
@@ -24,7 +24,7 @@ func TestIdempotencyStoreOutcomes(t *testing.T) {
 		t.Errorf("a concurrent claim reported outcome %d, want IdempotencyInFlight", outcome)
 	}
 	// A different request under the same key is a conflict, not a replay.
-	if outcome, _, _ := portal.BeginIdempotent(actor, key, FingerprintRequest("POST", "/v1/y", nil)); outcome != IdempotencyConflict {
+	if outcome, _, _ := portal.BeginIdempotent(actor, key, FingerprintRequest("POST", "/v1/y", nil, "")); outcome != IdempotencyConflict {
 		t.Errorf("a changed request reported outcome %d, want IdempotencyConflict", outcome)
 	}
 
@@ -49,7 +49,7 @@ func TestIdempotencyStoreOutcomes(t *testing.T) {
 func TestIdempotencyRecordsExpire(t *testing.T) {
 	portal := New(seed.Data{})
 	actor := "usr_participant"
-	print := FingerprintRequest("POST", "/v1/x", nil)
+	print := FingerprintRequest("POST", "/v1/x", nil, "")
 
 	portal.CompleteIdempotent(actor, "aging", print, http.StatusOK, []byte("{}"), "application/json")
 	if outcome, _, _ := portal.BeginIdempotent(actor, "aging", print); outcome != IdempotencyReplay {

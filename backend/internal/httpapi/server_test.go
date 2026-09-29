@@ -169,11 +169,11 @@ func TestJudgeSeesOwnScoresButNotPeerScores(t *testing.T) {
 	judgeA := tokenFor(t, tokens, data, "judge_a")
 	judgeB := tokenFor(t, tokens, data, "judge_b")
 
-	own := request(t, server, http.MethodGet, "/v1/judge/scores", judgeA, nil)
+	own := request(t, server, http.MethodGet, "/v1/judge/scores?event_id=evt_01", judgeA, nil)
 	if own.Code != http.StatusOK {
 		t.Fatalf("own scores status = %d, want 200", own.Code)
 	}
-	peer := request(t, server, http.MethodGet, "/v1/judge/scores?judge=judge_a", judgeB, nil)
+	peer := request(t, server, http.MethodGet, "/v1/judge/scores?judge=judge_a&event_id=evt_01", judgeB, nil)
 	if peer.Code != http.StatusForbidden {
 		t.Fatalf("peer scores status = %d, want 403", peer.Code)
 	}
@@ -181,7 +181,7 @@ func TestJudgeSeesOwnScoresButNotPeerScores(t *testing.T) {
 
 func TestParticipantCannotReadJudgeScores(t *testing.T) {
 	server, tokens, data := newTestServer(t)
-	response := request(t, server, http.MethodGet, "/v1/judge/scores", tokenFor(t, tokens, data, "participant"), nil)
+	response := request(t, server, http.MethodGet, "/v1/judge/scores?event_id=evt_01", tokenFor(t, tokens, data, "participant"), nil)
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", response.Code)
 	}
@@ -189,7 +189,7 @@ func TestParticipantCannotReadJudgeScores(t *testing.T) {
 
 func TestOrganizerCSVExport(t *testing.T) {
 	server, tokens, data := newTestServer(t)
-	response := request(t, server, http.MethodGet, "/v1/organizer/export.csv", tokenFor(t, tokens, data, "organizer"), nil)
+	response := request(t, server, http.MethodGet, "/v1/organizer/export.csv?event_id=evt_01", tokenFor(t, tokens, data, "organizer"), nil)
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", response.Code)
 	}
@@ -215,7 +215,7 @@ func TestLoginSetsSessionCookie(t *testing.T) {
 
 func TestOrganizerResultsIncludeRankingAndNormalization(t *testing.T) {
 	server, tokens, data := newTestServer(t)
-	response := request(t, server, http.MethodGet, "/v1/organizer/results", tokenFor(t, tokens, data, "organizer"), nil)
+	response := request(t, server, http.MethodGet, "/v1/organizer/results?event_id=evt_01", tokenFor(t, tokens, data, "organizer"), nil)
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", response.Code)
 	}

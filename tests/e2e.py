@@ -32,6 +32,7 @@ Standard library only. Nothing to install.
 
 from __future__ import annotations
 
+import re
 import argparse
 import json
 import os
@@ -194,7 +195,9 @@ class Client:
         return self.request("PUT", path, body=body, extra=extra)
 
     def login(self, email: str) -> "Client":
-        self.post("/login", form={"email": email, "password": PASSWORD})
+        # The API, not the retired sign-in form. The form lived outside the
+        # action gate, which is one of the reasons it is gone.
+        self.post("/v1/auth/login", body={"email": email, "password": PASSWORD})
         return self
 
 
@@ -296,6 +299,54 @@ def test_built_app(api: Client) -> None:
     deep = api.get("/organizer/sample-hack-2026/audit")
     check("a hard refresh on a client route serves the shell", deep.status == 200, f"got {deep.status}")
 
+    # Every asset the shell actually references must resolve.
+    #
+    # The suite used to probe one asset URL it invented, which 404'd correctly
+    # whether or not the real bundle was reachable. So when the file server was
+    # rooted one directory above the build output, every JS and CSS URL in
+    # index.html 404'd, the app never mounted, the portal was a blank page in
+    # every browser — and 142 assertions passed, because the only thing checked
+    # was a URL nobody would ever request.
+    #
+    # The names are hashed per build, so they cannot be hardcoded here. They have
+    # to be read out of the shell the server just served.
+    shell = api.get("/dashboard")
+    referenced = re.findall(r'(?:src|href)="(/assets/[^"]+)"', shell.body)
+    check(
+        "the app shell references its bundle",
+        bool(referenced),
+        "no /assets/ reference in the shell, so the app cannot mount",
+    )
+    for url in referenced:
+        asset = api.get(url)
+        check(
+            f"the shell's own asset {url.rsplit('/', 1)[-1]} is served",
+            asset.status == 200,
+            f"got {asset.status} — the app will not mount in a browser",
+        )
+    # And the bundle is real JavaScript rather than an error page.
+    for url in referenced:
+        if url.endswith(".js"):
+            body = api.get(url)
+            check(
+                "the bundle is javascript, not an error page",
+                "javascript" in (body.headers.get("content-type") or "")
+                and not body.body.lstrip().startswith("<!doctype"),
+                f"content-type {(body.headers.get('content-type') or 'unset')}",
+            )
+            break
+
+    # An unknown API path must be a JSON 404, not the app shell. The shell
+    # fallback is a catch-all, so without this the API answers 200 text/html
+    # for a route that does not exist and every client that calls response.json()
+    # on it gets a bare SyntaxError instead of a status.
+    unknown = api.get("/v1/no-such-endpoint")
+    check(
+        "an unknown API path is a JSON 404, not the app shell",
+        unknown.status == 404 and "json" in (unknown.headers.get("content-type") or ""),
+        f"got {unknown.status} {unknown.headers.get('content-type')}",
+    )
+
     for name in ("logo.svg", "icon.svg"):
         asset = api.get(f"/brand/{name}")
         check(f"the brand asset {name} is served", asset.status == 200 and "<svg" in asset.body, f"got {asset.status}")
@@ -327,7 +378,7 @@ def test_built_app(api: Client) -> None:
 
 def test_acceptance_surface(api: Client) -> None:
     section("T1 — the public surface")
-    gallery = api.get(f"/events/{FIXTURE_SLUG}")
+    gallery = api.get(f"/v1/events/{FIXTURE_SLUG}/projects")
     check("the gallery is public", gallery.status == 200, f"got {gallery.status}")
     # The gallery must show real fixture projects, not placeholder rows.
     check(
@@ -337,11 +388,11 @@ def test_acceptance_surface(api: Client) -> None:
     )
     check(
         "the gallery supports search",
-        api.get(f"/events/{FIXTURE_SLUG}?q=glass").status == 200,
+        api.get(f"/v1/events/{FIXTURE_SLUG}/projects?q=glass").status == 200,
     )
     check(
         "the gallery supports a track filter",
-        api.get(f"/events/{FIXTURE_SLUG}?track=trk_01").status == 200,
+        api.get(f"/v1/events/{FIXTURE_SLUG}/projects?track=trk_01").status == 200,
     )
     # The fixture event closed in the past, so a seeded portal is already shut.
     refused = api.post(
@@ -393,13 +444,13 @@ def test_isolation(api: Client) -> None:
     # The assignment list is shared with judges on purpose, because a judge has
     # to be able to see their own batch. So it is not refused wholesale:
     # naming a peer is, and asking for everything narrows to the caller.
-    named = judge_b.get("/v1/organizer/assignments?judge_id=jdg_24")
+    named = judge_b.get("/v1/organizer/assignments?event_id=evt_01&judge_id=jdg_24")
     check(
         "naming a peer on the assignment list is refused",
         named.status in (401, 403),
         f"got {named.status}",
     )
-    everything = judge_b.get("/v1/organizer/assignments")
+    everything = judge_b.get("/v1/organizer/assignments?event_id=evt_01")
     check(
         "the assignment list is reachable by a judge",
         everything.status == 200,
@@ -519,33 +570,33 @@ def test_lifecycle(api: Client) -> None:
     submitted = participant.post("/v1/submissions/prj_demo/submit")
     check("the participant submits", submitted.status == 200, f"got {submitted.status}")
 
-    gallery = api.get(f"/events/{DEMO_SLUG}")
+    gallery = api.get(f"/v1/events/{DEMO_SLUG}/projects")
     check(
         "the submitted project appears in the public gallery",
         "Lantern Index" in gallery,
     )
 
     # -- judge
-    form_page = judge.get("/projects/prj_demo")
+    criteria_names = ["functionality", "quality", "innovation"]
+    scores = {"functionality": 5, "quality": 4, "innovation": 4}
+
+    rubric = judge.get("/v1/judging/rubric?event_id=evt_demo")
     check(
-        "the assigned judge is offered a scoring form",
-        "criterion_functionality" in form_page,
-        "no scoring form for an assigned, unscored project",
+        "the assigned judge can read the rubric they are scoring against",
+        rubric.status == 200 and "functionality" in rubric,
+        f"got {rubric.status}",
     )
     non_judge = Client(api.base).login(LOGINS["participant"])
+    refused = non_judge.get("/v1/judge/scores?event_id=evt_demo")
     check(
-        "a non-judge is refused the judge console",
-        non_judge.get(f"/judge/{DEMO_SLUG}").status == 403,
+        "a non-judge is refused the all-judge scores view",
+        refused.status in (401, 403),
+        f"got {refused.status}",
     )
 
-    out_of_range = judge.post(
-        f"/judge/{DEMO_SLUG}/projects/prj_demo",
-        form={
-            "criterion_functionality": "99",
-            "criterion_quality": "4",
-            "criterion_innovation": "3",
-            "submitted": "false",
-        },
+    out_of_range = judge.put(
+        "/v1/judge/projects/prj_demo/review",
+        body={"criteria": dict(scores, functionality=99), "submitted": False},
     )
     check(
         "an out-of-range score is refused",
@@ -553,28 +604,17 @@ def test_lifecycle(api: Client) -> None:
         f"got {out_of_range.status}",
     )
 
-    draft_review = judge.post(
-        f"/judge/{DEMO_SLUG}/projects/prj_demo",
-        form={
-            "criterion_functionality": "5",
-            "criterion_quality": "4",
-            "criterion_innovation": "4",
-            "comment": "A draft, not yet submitted.",
-            "submitted": "false",
-        },
+    draft_review = judge.put(
+        "/v1/judge/projects/prj_demo/review",
+        body={"criteria": scores, "comment": "A draft, not yet submitted.", "submitted": False},
     )
-    check("a judge saves a draft", draft_review.status == 303, f"got {draft_review.status}")
+    check("a judge saves a draft", draft_review.status == 200, f"got {draft_review.status}")
 
     # -- a caller who is neither a judge nor assigned cannot score it
     outsider = Client(api.base).login(LOGINS["participant"])
-    unassigned = outsider.post(
-        f"/judge/{DEMO_SLUG}/projects/prj_demo",
-        form={
-            "criterion_functionality": "1",
-            "criterion_quality": "1",
-            "criterion_innovation": "1",
-            "submitted": "true",
-        },
+    unassigned = outsider.put(
+        "/v1/judge/projects/prj_demo/review",
+        body={"criteria": dict.fromkeys(criteria_names, 1), "submitted": True},
     )
     check(
         "an unassigned non-judge cannot score the project",
@@ -583,26 +623,15 @@ def test_lifecycle(api: Client) -> None:
     )
 
     # -- submit the review, then confirm it is locked
-    locked_in = judge.post(
-        f"/judge/{DEMO_SLUG}/projects/prj_demo",
-        form={
-            "criterion_functionality": "5",
-            "criterion_quality": "4",
-            "criterion_innovation": "4",
-            "comment": "Submitted for real.",
-            "submitted": "true",
-        },
+    locked_in = judge.put(
+        "/v1/judge/projects/prj_demo/review",
+        body={"criteria": scores, "comment": "Submitted for real.", "submitted": True},
     )
-    check("a judge submits a review", locked_in.status == 303, f"got {locked_in.status}")
+    check("a judge submits a review", locked_in.status == 200, f"got {locked_in.status}")
 
-    after = judge.post(
-        f"/judge/{DEMO_SLUG}/projects/prj_demo",
-        form={
-            "criterion_functionality": "1",
-            "criterion_quality": "1",
-            "criterion_innovation": "1",
-            "submitted": "true",
-        },
+    after = judge.put(
+        "/v1/judge/projects/prj_demo/review",
+        body={"criteria": dict.fromkeys(criteria_names, 1), "submitted": True},
     )
     check(
         "a submitted review cannot be changed",
@@ -619,14 +648,18 @@ def test_lifecycle(api: Client) -> None:
         f"got {hidden.status}",
     )
 
-    published = organizer.post(f"/organizer/{DEMO_SLUG}/publish", form={"action": "publish"})
-    check("the organizer publishes", published.status == 303, f"got {published.status}")
+    published = organizer.post(
+        f"/v1/organizer/events/{DEMO_SLUG}/publish-results", body={"public": True}
+    )
+    check("the organizer publishes", published.status in (200, 201), f"got {published.status}")
 
     visible = anonymous.get(f"/v1/events/{DEMO_SLUG}/leaderboard")
     check("the public can see results once published", visible.status == 200, f"got {visible.status}")
 
-    withheld = organizer.post(f"/organizer/{DEMO_SLUG}/publish", form={"action": "unpublish"})
-    check("the organizer can withdraw them again", withheld.status == 303, f"got {withheld.status}")
+    withheld = organizer.post(
+        f"/v1/organizer/events/{DEMO_SLUG}/unpublish-results", body={"reason": "withdrawn for review"}
+    )
+    check("the organizer can withdraw them again", withheld.status in (200, 201), f"got {withheld.status}")
     check(
         "withdrawing hides them again",
         anonymous.get(f"/v1/events/{DEMO_SLUG}/leaderboard").status == 403,
@@ -1075,7 +1108,24 @@ def test_durability(binary: str, data_dir: str, port: int) -> None:
     with open(path) as handle:
         snapshot = json.load(handle)
     check("the snapshot is versioned", snapshot.get("version") == 1)
-    check("no password hash reaches the data file", '"password_hash"' not in json.dumps(snapshot)[:200000])
+    # A password hash is persisted, and it has to be. The previous assertion was
+    # that none ever reached the file, on the reasoning that a data file is what
+    # gets copied between machines. The cost was that every restart destroyed
+    # every password, so the only credentials that still worked afterwards were
+    # the fixed public seed tokens. What has to be true is narrower and is what
+    # is asserted: no plaintext password is in the file, and what is there is a
+    # bcrypt digest.
+    document = json.dumps(snapshot)
+    hashes = [u.get("password_hash", "") for u in snapshot.get("users", [])]
+    check(
+        "every stored password is a bcrypt hash and no plaintext password is present",
+        hashes and all(h.startswith("$2") for h in hashes) and "codeceremony-dev" not in document,
+        f"{sum(1 for h in hashes if h)} hashes, plaintext present: {'codeceremony-dev' in document}",
+    )
+    check(
+        "the shared seed password does not appear in the data file in the clear",
+        "codeceremony-dev" not in document,
+    )
     check("the snapshot carries events", len(snapshot.get("events", [])) > 0)
     check("the snapshot carries reviews", len(snapshot.get("reviews", [])) > 0)
     check("the snapshot carries submissions", len(snapshot.get("submissions", [])) > 0)

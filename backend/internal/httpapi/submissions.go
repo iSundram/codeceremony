@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/iSundram/codeceremony/backend/internal/auth"
+	"github.com/iSundram/codeceremony/backend/internal/authz"
 	"github.com/iSundram/codeceremony/backend/internal/domain"
 )
 
@@ -137,6 +138,26 @@ func (s *Server) editSubmission(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
+	// Resolved before ReviseSubmission, which runs its callback while holding
+	// the store's write lock. Looking the track up inside that callback took a
+	// read lock on the same mutex, which Go's RWMutex does not allow: the request
+	// never returned, and because the write lock was never released, every other
+	// request against the store queued behind it. One PATCH carrying a track_id
+	// wedged the entire portal, permanently.
+	//
+	// The invariant this restores: a store method that holds the lock never calls
+	// another store method, from inside a callback or otherwise. Anything the
+	// callback needs has to be resolved before it is handed over.
+	resolvedTrackID := ""
+	if strings.TrimSpace(request.TrackID) != "" {
+		track, err := s.store.TrackByID(strings.TrimSpace(request.TrackID))
+		if err != nil || track.Event != project.EventID {
+			writeError(w, http.StatusUnprocessableEntity, "validation_error", "a valid track is required")
+			return
+		}
+		resolvedTrackID = track.ID
+	}
+
 	updated, version, err := s.store.ReviseSubmission(projectID, principal.UserID, request.Reason, func(current domain.Submission) (domain.Submission, error) {
 		next := current
 		next.Status = domain.SubmissionDraft
@@ -149,12 +170,8 @@ func (s *Server) editSubmission(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimSpace(request.Description) != "" {
 			next.Description = request.Description
 		}
-		if strings.TrimSpace(request.TrackID) != "" {
-			track, err := s.store.TrackByID(strings.TrimSpace(request.TrackID))
-			if err != nil || track.Event != current.EventID {
-				return current, domain.ErrValidation
-			}
-			next.TrackID = track.ID
+		if resolvedTrackID != "" {
+			next.TrackID = resolvedTrackID
 		}
 		if strings.TrimSpace(request.RepositoryURL) != "" {
 			next.RepositoryURL = strings.TrimSpace(request.RepositoryURL)
@@ -334,6 +351,17 @@ func (s *Server) setSubmissionStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	projectID := r.PathValue("projectID")
+	// Loaded before the write so the decision can be re-resolved against the
+	// event this project is actually in, not the one the caller claimed. See
+	// authorizeRecordEvent.
+	existing, err := s.store.SubmissionByID(projectID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "submission not found")
+		return
+	}
+	if !s.authorizeRecordEvent(w, r, authz.ActionSubmissionUpdateAny, existing.EventID) {
+		return
+	}
 	updated, err := s.store.SetSubmissionStatus(projectID, domain.SubmissionStatus(strings.TrimSpace(request.Status)), request.Note, principal.UserID)
 	if err != nil {
 		switch {
@@ -360,9 +388,9 @@ func (s *Server) scanDuplicates(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "authentication is required")
 		return
 	}
-	eventID := r.URL.Query().Get("event_id")
-	if eventID == "" {
-		eventID = "evt_01"
+	eventID, ok := s.queryEvent(w, r)
+	if !ok {
+		return
 	}
 	flags, err := s.store.ScanForDuplicates(eventID)
 	if err != nil {
@@ -376,9 +404,9 @@ func (s *Server) scanDuplicates(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listDuplicates(w http.ResponseWriter, r *http.Request) {
-	eventID := r.URL.Query().Get("event_id")
-	if eventID == "" {
-		eventID = "evt_01"
+	eventID, ok := s.queryEvent(w, r)
+	if !ok {
+		return
 	}
 	flags := s.store.ListDuplicates(eventID, domain.DuplicateStatus(strings.TrimSpace(r.URL.Query().Get("status"))))
 	writeJSON(w, http.StatusOK, map[string]any{"data": flags, "count": len(flags)})

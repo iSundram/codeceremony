@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ type Service struct {
 	logger     *slog.Logger
 	appURL     string
 	now        func() time.Time
+	dedupeStep time.Duration
 }
 
 type Options struct {
@@ -26,6 +28,9 @@ type Options struct {
 	FromAddress string
 	Clock       func() time.Time
 	Logger      *slog.Logger
+	// DedupeWindow is the cadence a caller-supplied dedupe key is scoped to.
+	// Zero means one key per calendar day, which is the intended default.
+	DedupeWindow time.Duration
 }
 
 func NewService(data *store.Store, dispatcher *Dispatcher, registry *Registry, options Options) *Service {
@@ -34,6 +39,9 @@ func NewService(data *store.Store, dispatcher *Dispatcher, registry *Registry, o
 	}
 	if options.Logger == nil {
 		options.Logger = slog.Default()
+	}
+	if options.DedupeWindow <= 0 {
+		options.DedupeWindow = defaultDedupeWindow
 	}
 	appURL := strings.TrimRight(strings.TrimSpace(options.AppURL), "/")
 	if appURL == "" {
@@ -46,6 +54,7 @@ func NewService(data *store.Store, dispatcher *Dispatcher, registry *Registry, o
 		logger:     options.Logger,
 		appURL:     appURL,
 		now:        options.Clock,
+		dedupeStep: options.DedupeWindow,
 	}
 }
 
@@ -70,7 +79,36 @@ func (s *Service) PreferencesURL() string {
 }
 
 func (s *Service) UnsubscribeURL(token string) string {
-	return s.appURL + "/unsubscribe?token=" + token
+	// The path has to be the one the server actually routes. It said
+	// /unsubscribe?token=, which no route matched: the handler is
+	// /v1/unsubscribe, and the bare path fell through to the app's client-route
+	// fallback, so every unsubscribe link in every digest rendered a not-found
+	// page and nobody could opt out. A consent link that does not work is worse
+	// than having none, because it is a promise the portal does not keep.
+	return s.appURL + "/v1/unsubscribe/" + url.PathEscape(token)
+}
+
+// defaultDedupeWindow is the cadence assumed when a caller supplies no dedupe
+// key: one such message per template, per recipient, per calendar day.
+const defaultDedupeWindow = 24 * time.Hour
+
+// deriveDedupeKey builds the key used when the caller supplies none. The store
+// keeps the first message ever queued under a key and returns it forever, so a
+// bare template+user key would make every later send a silent no-op that still
+// reports success. Scoping the key to a window keeps the duplicate suppression
+// the key exists for while letting the next scheduled send through.
+//
+// Only the truncated bucket may appear in the key: a full-resolution timestamp
+// would make every send unique, which is the same permanent-duplicate bug the
+// window exists to avoid.
+func (s *Service) deriveDedupeKey(template, userID string) string {
+	window := s.dedupeStep
+	if window <= 0 {
+		window = defaultDedupeWindow
+	}
+	size := int64(window)
+	bucket := time.Unix(0, (s.now().UTC().UnixNano()/size)*size).UTC()
+	return fmt.Sprintf("%s:%s:%s", template, userID, bucket.Format(time.RFC3339))
 }
 
 // SendTo queues a rendered template for a user, skipping silently when the user
@@ -84,8 +122,8 @@ func (s *Service) SendTo(userID, template string, values map[string]any, dedupeK
 	for key, value := range values {
 		context[key] = value
 	}
-	if dedupeKey == "" {
-		dedupeKey = template + ":" + userID
+	if strings.TrimSpace(dedupeKey) == "" {
+		dedupeKey = s.deriveDedupeKey(template, user.ID)
 	}
 	return s.dispatcher.Queue(domain.MailMessage{
 		UserID:    user.ID,

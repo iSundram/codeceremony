@@ -9,11 +9,18 @@ import (
 	"github.com/iSundram/codeceremony/backend/internal/seed"
 )
 
+// fixturePasswordHash is a well-formed but fictional bcrypt digest. Tests that
+// round-trip a snapshot through Restore need the fixture to look like a real
+// hash, because the restore path rejects a password field that is not one —
+// which is how a plaintext password in a data file is caught. It is not the hash
+// of any password.
+const fixturePasswordHash = "$2a$10$4M0PJg2VnNWu3T3vB2n1ueOY0Q7Zt3YbM2Xh1Kq1L9pG4Q6r0zC"
+
 // comparisonStore returns a store with two events, so the event fence can be
 // tested against a project that genuinely belongs somewhere else.
 func comparisonStore(t *testing.T) *Store {
 	t.Helper()
-	data := seed.Default("hash")
+	data := seed.Default(fixturePasswordHash)
 	second := domain.Event{
 		ID: "evt_two", Slug: "second-event", Name: "Second",
 		Description: "another event", Timezone: "UTC",
@@ -190,7 +197,7 @@ func TestComparisonsSurviveASnapshotRoundTrip(t *testing.T) {
 	}
 	snapshot := portal.Snapshot()
 
-	restored := New(seed.Default("hash"))
+	restored := New(seed.Default(fixturePasswordHash))
 	if err := restored.Restore(snapshot); err != nil {
 		t.Fatalf("Restore() error = %v", err)
 	}

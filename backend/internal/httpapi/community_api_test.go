@@ -351,7 +351,7 @@ func TestImportRejectsBrokenBundle(t *testing.T) {
 	if forbidden.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403, body = %s", forbidden.Code, forbidden.Body.String())
 	}
-	noExport := request(t, server, http.MethodGet, "/v1/organizer/export", tokenFor(t, tokens, data, "participant"), nil)
+	noExport := request(t, server, http.MethodGet, "/v1/organizer/export?event_id=evt_01", tokenFor(t, tokens, data, "participant"), nil)
 	if noExport.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403, body = %s", noExport.Code, noExport.Body.String())
 	}

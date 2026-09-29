@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"errors"
 	"net/http"
+	"strings"
 	"strconv"
 	"time"
 
@@ -158,9 +159,39 @@ func (s *Server) grantCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "validation_error", err.Error())
 		return
 	}
+	// The shape of the request is checked before the caller is judged on it. A
+	// grant with no reason is a malformed request whatever the caller's role,
+	// and answering it 422 rather than 403 keeps the two failures
+	// distinguishable: a 403 would tell an unauthorized caller that the
+	// permission they asked for parses.
+	if strings.TrimSpace(request.Reason) == "" {
+		writeError(w, http.StatusUnprocessableEntity, "validation_error",
+			"a grant needs a reason: a permission nobody can explain is a permission nobody can defend")
+		return
+	}
+	var expiresAt *time.Time
+	if request.ExpiresAt != "" {
+		parsed, err := time.Parse(time.RFC3339, request.ExpiresAt)
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "validation_error",
+				"expires_at must be an RFC3339 timestamp")
+			return
+		}
+		expiresAt = &parsed
+	}
+
 	// Resolving a grant needs the event it is scoped to, so a grant for an
 	// event the caller does not staff is refused before it is written rather
 	// than after.
+	//
+	// A grant with no event is not "a grant for no event": it is a
+	// platform-wide grant, because that is the target an unscoped decision is
+	// evaluated against. Gating it on ActionGrantManage, which every organizer
+	// holds by role, let any organizer mint a self-applied platform-wide allow
+	// for any action in the vocabulary — account.set_role among them — and then
+	// use it. A grant is the one record in this system that can manufacture
+	// authority, so minting a platform-wide one is a platform permission and
+	// nothing less will do.
 	if request.EventID != "" {
 		event, err := s.store.EventByID(request.EventID)
 		if err != nil {
@@ -170,8 +201,22 @@ func (s *Server) grantCreate(w http.ResponseWriter, r *http.Request) {
 		if _, ok := s.authorize(w, r, authz.ActionGrantManage, authz.Target{EventID: event.ID}); !ok {
 			return
 		}
-	} else if _, ok := s.authorize(w, r, authz.ActionGrantManage, authz.Target{}); !ok {
+	} else if _, ok := s.authorize(w, r, authz.ActionPlatformManage, authz.Target{}); !ok {
 		return
+	}
+
+	// Holding a permission is not the same as being entitled to hand it out.
+	// Without this, an organizer with no platform role could grant themselves
+	// an event-scoped allow for an action they do not hold, and the resolver
+	// would then honour it on the next request.
+	if request.UserID == principal.UserID {
+		if _, ok := s.authorize(w, r, action, authz.Target{EventID: request.EventID, ObjectID: request.ObjectID}); !ok {
+			return
+		}
+	} else if request.Allow {
+		if _, ok := s.authorize(w, r, action, authz.Target{EventID: request.EventID, ObjectID: request.ObjectID}); !ok {
+			return
+		}
 	}
 
 	grant := authz.Grant{
@@ -184,15 +229,7 @@ func (s *Server) grantCreate(w http.ResponseWriter, r *http.Request) {
 		GrantedBy: principal.UserID,
 		CreatedAt: s.now().UTC(),
 	}
-	if request.ExpiresAt != "" {
-		expires, err := time.Parse(time.RFC3339, request.ExpiresAt)
-		if err != nil {
-			writeError(w, http.StatusUnprocessableEntity, "validation_error",
-				"expires_at must be an RFC3339 timestamp")
-			return
-		}
-		grant.ExpiresAt = &expires
-	}
+	grant.ExpiresAt = expiresAt
 	created, err := s.store.CreateGrant(grant)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {

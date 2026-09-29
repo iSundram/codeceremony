@@ -9,8 +9,15 @@ import (
 	"github.com/iSundram/codeceremony/backend/internal/store"
 )
 
+// fixturePasswordHash is a well-formed but fictional bcrypt digest. Tests that
+// round-trip a snapshot through Restore need the fixture to look like a real
+// hash, because the restore path rejects a password field that is not one —
+// which is how a plaintext password in a data file is caught. It is not the hash
+// of any password.
+const fixturePasswordHash = "$2a$10$4M0PJg2VnNWu3T3vB2n1ueOY0Q7Zt3YbM2Xh1Kq1L9pG4Q6r0zC"
+
 func TestSessionManagerIssuesAndRevokesSession(t *testing.T) {
-	data := store.New(seed.Default("hash"))
+	data := store.New(seed.Default(fixturePasswordHash))
 	manager := NewSessionManager(time.Hour, data)
 	now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
 	manager.now = func() time.Time { return now }
@@ -41,7 +48,7 @@ func TestSessionManagerIssuesAndRevokesSession(t *testing.T) {
 }
 
 func TestSessionManagerRejectsExpiredSession(t *testing.T) {
-	data := store.New(seed.Default("hash"))
+	data := store.New(seed.Default(fixturePasswordHash))
 	manager := NewSessionManager(time.Hour, data)
 	now := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
 	manager.now = func() time.Time { return now }

@@ -112,11 +112,50 @@ func (s *Server) unsubscribe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "the unsubscribe link could not be consumed")
 		return
 	}
+	if wantsHTML(r) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")
+		_, _ = w.Write([]byte(unsubscribeReceiptHTML(string(token.Scope))))
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data":         preferences,
 		"unsubscribed": true,
 		"scope":        token.Scope,
 	})
+}
+
+// wantsHTML reports whether the caller is a person following a link in an email
+// rather than the application. A browser sends Accept: text/html; the app sends
+// application/json.
+func wantsHTML(r *http.Request) bool {
+	return strings.Contains(r.Header.Get("Accept"), "text/html")
+}
+
+// unsubscribeReceiptHTML is the page a recipient lands on. It is the only
+// server-rendered HTML in the product, and it is here because an unsubscribe is
+// a consent decision a person makes, not a call the app makes: the link is in
+// their inbox and it has to resolve to something that tells them what happened.
+func unsubscribeReceiptHTML(scope string) string {
+	subject := "You will no longer receive this mail"
+	if scope != "" {
+		subject = "You will no longer receive " + scope + " mail"
+	}
+	return `<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Unsubscribed — CodeCeremony</title>
+<body style="font:16px/1.5 system-ui,sans-serif;color:#1b1b1b;background:#f7f7f5;margin:0;padding:3rem 1rem">
+<main style="max-width:34rem;margin:0 auto;background:#fff;border:1px solid #e2e1dd;border-radius:8px;padding:2rem">
+<h1 style="font-size:1.25rem;margin:0 0 .5rem">Unsubscribed</h1>
+<p style="margin:0 0 1rem">` + subject + `. Your other mail preferences are unchanged, and you can change them again from your account at any time.</p>
+<p style="margin:0;color:#6a6a66;font-size:.875rem">If you did not request this, no action is needed — the link only works once.</p>
+</main>
+</body>
+</html>`
 }
 
 func (s *Server) requestVerificationMail(w http.ResponseWriter, r *http.Request) {

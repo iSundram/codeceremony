@@ -71,10 +71,22 @@ interface RequestOptions {
   /** An Idempotency-Key, so a retry cannot apply a write twice. */
   idempotencyKey?: string;
   signal?: AbortSignal;
+  /**
+   * Called with the ETag the response carried, if any.
+   *
+   * request() used to return only the parsed body, so the ETag the server sets
+   * on every read and every successful write was discarded. The If-Match option
+   * existed and was therefore always undefined, which made the server's 412
+   * guard unreachable from the product: two tabs scoring the same project
+   * silently overwrote each other, which is the exact loss the guard exists to
+   * prevent. A callback rather than a second return value, so every existing
+   * call site keeps its type.
+   */
+  onEtag?: (etag: string | undefined) => void;
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { method = "GET", body, ifMatch, idempotencyKey, signal } = options;
+  const { method = "GET", body, ifMatch, idempotencyKey, signal, onEtag } = options;
   const headers: Record<string, string> = { Accept: "application/json" };
   if (body !== undefined) headers["Content-Type"] = "application/json";
   if (ifMatch) headers["If-Match"] = ifMatch;
@@ -101,9 +113,28 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     throw new ApiError(response.status, code, message);
   }
 
+  onEtag?.(response.headers.get("ETag") ?? undefined);
+
   if (response.status === 204) return undefined as T;
+
+  // A 2xx that is not JSON is a contract violation, not a body. It used to be
+  // handed straight to response.json(), which threw a bare SyntaxError that
+  // carried no status and no code, so a request that reached the app's
+  // client-route fallback instead of the API surfaced as "Unexpected token <
+  // in <!doctype" with nothing to grep for.
+  const contentType = response.headers.get("Content-Type") ?? "";
+  if (!contentType.includes("json")) {
+    throw new ApiError(
+      response.status,
+      "invalid_response",
+      `the server returned ${contentType || "an unlabelled body"} where JSON was expected`,
+    );
+  }
   return (await response.json()) as T;
 }
+
+
+
 
 /** The portal's JSON API, grouped the way the applications consume it. */
 export const api = {
@@ -120,20 +151,45 @@ export const api = {
 
   // ---- events
   events: () => request<{ data: EventSummary[] }>("/events"),
-  event: (slug: string) => request<{ data: EventDetail }>(`/events/${slug}`),
+  // The related collections are siblings of `data`, not fields inside it. They
+  // were declared nested, so `event.tracks` was undefined and every read of it
+  // threw on the public event page — the one page every visitor lands on.
+  event: (slug: string) =>
+    request<{
+      data: EventDetail;
+      tracks: Track[];
+      prizes: Prize[];
+      milestones: Milestone[];
+      questions: HackathonQuestion[];
+      hosts: HackathonHost[];
+      rubric: Rubric | null;
+      team_policy: TeamPolicy;
+      judge_count: number;
+    }>(`/events/${slug}`),
   projects: (slug: string, query: ProjectQuery = {}) => {
     const params = new URLSearchParams();
     if (query.track) params.set("track", query.track);
     if (query.q) params.set("q", query.q);
     if (query.page) params.set("page", String(query.page));
     const search = params.toString();
-    return request<{ data: Project[]; count: number }>(`/events/${slug}/projects${search ? `?${search}` : ""}`);
+    // meta.total, not count. The count field did not exist, so the pagination
+    // control had nothing to page against and every project past the first
+    // page of 24 was unreachable.
+    return request<{ data: Project[]; meta: { page: number; page_size: number; total: number } }>(
+      `/events/${slug}/projects${search ? `?${search}` : ""}`,
+    );
   },
 
   // ---- account
   profile: () => request<{ data: AccountRecord }>("/account/profile"),
-  updateProfile: (patch: Partial<Profile>) =>
-    request<{ data: AccountRecord }>("/account/profile", { method: "PATCH", body: patch }),
+  // Two separate bugs in one call. The body sent display_name, headline,
+  // organization and bio, and the server's decoder sets DisallowUnknownFields,
+  // so the whole request was rejected with a 400 naming "headline" — the profile
+  // editor could not save at all. And the response was declared as an
+  // AccountRecord while the handler returns the updated user, so the editor read
+  // response.data.profile, got undefined, and stayed on its skeleton forever.
+  updateProfile: (patch: ProfilePatch) =>
+    request<{ data: SessionUser }>("/account/profile", { method: "PATCH", body: patch }),
   // The caller's own teams ride on the profile read rather than on a separate
   // listing. A "teams I am in" endpoint that returned a platform-wide list and
   // expected the client to filter it would ship every membership in the portal
@@ -142,7 +198,13 @@ export const api = {
   sessions: () => request<{ data: SessionSummary[] }>("/account/sessions"),
 
   // ---- submissions
-  submission: (id: string) => request<{ data: SubmissionDetail }>(`/submissions/${id}`),
+  // The submission is the project, and the team, versions and flags are
+  // siblings of it. It was declared as {submission, versions, flags} inside
+  // data, so data.submission did not exist.
+  submission: (id: string) =>
+    request<{ data: Submission; team: Team | null; versions: Version[]; flags: Flag[] }>(
+      `/submissions/${id}`,
+    ),
   updateSubmission: (id: string, patch: Partial<Submission>, ifMatch?: string) =>
     request<{ data: Submission }>(`/submissions/${id}`, {
       method: "PATCH",
@@ -156,7 +218,10 @@ export const api = {
     }),
 
   // ---- judging
-  myAssignments: (slug: string) => request<{ data: Assignment[] }>(`/judge/assignments?event_slug=${slug}`),
+  myAssignments: (slug: string) =>
+    request<{ data: Assignment[]; pending: number; count: number }>(
+      `/judge/assignments?event_slug=${slug}`,
+    ),
   rubric: (eventID: string) => request<{ data: Rubric }>(`/judging/rubric?event_id=${eventID}`),
   saveReview: (
     projectID: string,
@@ -168,14 +233,28 @@ export const api = {
       body: payload,
       ...(ifMatch ? { ifMatch } : {}),
     }),
-  myReview: (projectID: string) => request<{ data: Review | null }>(`/judge/projects/${projectID}/review`),
+  // Registered as PUT only, so this GET was answered by the app's client-route
+  // fallback: 200, text/html, and response.json() threw a bare SyntaxError that
+  // no catch treated as an ApiError. The judge scoring page had no error state
+  // for it and showed a permanent skeleton. The server route now exists.
+  myReview: (projectID: string, onEtag?: (etag: string | undefined) => void) =>
+    request<{ data: Review | null }>(`/judge/projects/${projectID}/review`, { onEtag }),
 
   // ---- organizer
+  // These three took a slug where the handler read an id, and results declared
+  // a row array where the handler returns a judging summary. The event picker
+  // was a no-op: every panel showed the default event, and rows.map threw.
   progress: (slug: string) => request<{ data: Progress }>(`/organizer/progress?event_slug=${slug}`),
-  panel: (slug: string) => request<{ data: JudgeRow[] }>(`/organizer/panel?event_id=${slug}`),
-  results: (slug: string) => request<{ data: ResultRow[]; method: string }>(`/organizer/results?event_slug=${slug}`),
+  panel: (slug: string) => request<{ data: JudgeRow[] }>(`/organizer/panel?event_slug=${slug}`),
+  results: (slug: string) =>
+    request<{ data: ResultsSummary; rubric: Rubric | null }>(`/organizer/results?event_slug=${slug}`),
+  // Without a body the handler reads public=false, so the leaderboard stayed
+  // 403 to anonymous visitors while the button said it had published them.
   publishResults: (slug: string) =>
-    request<{ data: { published: boolean } }>(`/organizer/events/${slug}/publish-results`, { method: "POST" }),
+    request<{ data: Event }>(`/organizer/events/${slug}/publish-results`, {
+      method: "POST",
+      body: { public: true },
+    }),
 
   // ---- audit and grants, the accountability surface
   audit: (query: AuditQuery = {}) => {
@@ -282,10 +361,100 @@ export interface Submission {
   team_id: string;
 }
 
+// ---- shapes the server sends, transcribed from backend/internal/domain
+//
+// These were absent while being referenced, which is how the mismatches above
+// compiled at all. Each field name below is the JSON tag on the corresponding Go
+// struct.
+
+export interface Track {
+  id: string;
+  event_id: string;
+  name: string;
+  slug: string;
+  summary?: string;
+  order: number;
+}
+
+export interface Prize {
+  id: string;
+  event_id: string;
+  track_id?: string;
+  name: string;
+  description: string;
+  rank: number;
+}
+
+export interface Milestone {
+  id: string;
+  event_id: string;
+  title: string;
+  detail?: string;
+  due_at: string;
+  position: number;
+}
+
+export interface HackathonQuestion {
+  id: string;
+  event_id: string;
+  key: string;
+  prompt: string;
+  help_text?: string;
+  type: string;
+  audience: string;
+  required: boolean;
+  options?: string[];
+}
+
+export interface HackathonHost {
+  id: string;
+  event_id: string;
+  name: string;
+  url?: string;
+  logo_url?: string;
+}
+
+export interface TeamPolicy {
+  min_size: number;
+  max_size: number;
+  allow_solo: boolean;
+  requires_approval: boolean;
+}
+
+/** The fields PATCH /v1/account/profile accepts. Nothing else is accepted. */
+export interface ProfilePatch {
+  display_name?: string;
+  avatar_url?: string;
+  bio?: string;
+  organization?: string;
+  timezone?: string;
+  locale?: string;
+}
+
+export interface Version {
+  id: string;
+  submission_id: string;
+  version: number;
+  title: string;
+  summary: string;
+  reason: string;
+  created_at: string;
+}
+
+export interface Flag {
+  id: string;
+  event_id: string;
+  project_id: string;
+  duplicate_of_project_id: string;
+  kind: string;
+  note?: string;
+  created_at: string;
+}
+
 export interface SubmissionDetail {
   submission: Submission;
-  versions: { version: number; reason: string; created_at: string }[];
-  flags: { id: string; kind: string; note?: string }[];
+  versions: Version[];
+  flags: Flag[];
 }
 
 export interface Team {
@@ -296,14 +465,25 @@ export interface Team {
   member_count: number;
 }
 
+/**
+ * The account's own profile, as GET /v1/account/profile returns it.
+ *
+ * This was declared with a `headline` field, which does not exist. `headline`
+ * belongs to a judge's UserProfile; an account has a display name, which is what
+ * appears next to a review. The mismatch is why the profile editor had to be
+ * reworked around display_name.
+ */
 export interface Profile {
   user_id: string;
-  headline?: string;
+  display_name?: string;
   bio?: string;
   organization?: string;
   timezone?: string;
   locale?: string;
   avatar_url?: string;
+  headline?: string;
+  participations?: Membership[];
+  teams?: Membership[];
 }
 
 export interface SessionSummary {
@@ -328,7 +508,18 @@ export interface Assignment {
 export interface Rubric {
   id: string;
   version: number;
-  criteria: { key: string; label: string; weight: number; min: number; max: number; description?: string }[];
+  // min_score/max_score, not min/max. Array.from({length: NaN}) produced no
+  // options, so every criterion rendered an empty select and a judge could not
+  // enter a single score.
+  criteria: {
+    key: string;
+    label: string;
+    weight: number;
+    min_score: number;
+    max_score: number;
+    required: boolean;
+    description?: string;
+  }[];
 }
 
 export interface Review {
@@ -362,16 +553,36 @@ export interface JudgeRow {
   active: boolean;
 }
 
+// The wire names. normalized_score/raw_score/reviews did not exist: the
+// server sends normalized_mean, raw_mean and review_count, plus a confidence
+// interval on low and high. A component reading the old names rendered blank
+// cells for every project, which is what a rankings table looks like when it is
+// quietly wrong rather than loudly broken.
 export interface ResultRow {
   project_id: string;
-  title: string;
-  track_name?: string;
-  normalized_score: number;
-  raw_score: number;
+  raw_mean: number;
+  normalized_mean: number;
+  low: number;
+  high: number;
+  review_count: number;
+  low_information_reviews: number;
   rank: number;
-  reviews: number;
-  low_information: boolean;
   separable: boolean;
+  tie_group: number;
+  previous_rank: number;
+}
+
+/** The whole fit, which is what the results endpoint returns under `data`. */
+export interface ResultsSummary {
+  method: string;
+  method_version: number;
+  confidence: number;
+  resamples: number;
+  reviews: number;
+  projects: ResultRow[];
+  low_information_judges: string[];
+  judges: unknown[];
+  criterion_stats: unknown[];
 }
 
 export interface AuditEntry {

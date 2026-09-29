@@ -26,7 +26,6 @@
   border: 1px solid transparent;
   font: var(--text-body-small);
   font-weight: 600;
-  line-height: 1;
   text-decoration: none;
   cursor: pointer;
   transition: background-color var(--motion-fast) var(--ease-standard),
@@ -35,8 +34,16 @@
     border-color var(--motion-fast) var(--ease-standard);
 }
 
+/* §8.1 asks for gradient.ink here, and §3.5 allows small text over gradient.ink
+ * only where the contrast has been verified. It has not been: the recipe ends at
+ * accent-blue, and mist on #749DD0 measures 2.20:1, which fails AA at every size
+ * §3.4 covers. §3.4 resolves a failing pair by changing the combination rather
+ * than adding a colour, and the only mist-on-dark pairing in the palette that
+ * clears 4.5:1 is solid navy at 5.80:1 — so the primary action is navy. Ink is
+ * the pressed state, at 9.70:1 against mist. §8.1 naming gradient.ink for this
+ * slot is a design decision this file cannot make on its own and is reported. */
 .btn--primary {
-  background: var(--gradient-ink);
+  background: var(--color-border-strong);
   color: var(--color-text-on-dark);
   box-shadow: var(--shadow-0);
 }
@@ -46,7 +53,7 @@
 }
 
 .btn--primary:active {
-  background: var(--color-border-strong);
+  background: var(--ink);
 }
 
 .btn--secondary {
@@ -104,16 +111,23 @@
   flex: 0 0 auto;
 }
 
+/* The disabled state is carried by color.text-disabled, the token §3.2 defines
+ * for exactly this, rather than by fading the whole control with opacity. An
+ * opacity also takes the label out of its own contrast calculation, which on a
+ * gradient is where the label was already the weaker half of the pair. */
 .btn:disabled,
 .btn[aria-disabled="true"] {
   cursor: not-allowed;
-  opacity: 0.55;
   box-shadow: none;
 }
 
+.btn:disabled {
+  color: var(--color-text-disabled);
+}
+
 .btn--primary:disabled {
-  background: var(--color-text-disabled);
-  color: var(--color-surface);
+  background: var(--color-surface-muted);
+  color: var(--color-text-disabled);
 }
 
 .btn--secondary:disabled,
@@ -121,6 +135,10 @@
   background: transparent;
   color: var(--color-text-disabled);
   border-color: var(--color-border);
+}
+
+.btn--ghost:disabled {
+  color: var(--color-text-disabled);
 }
 
 /* §7.6 loading state. The label stays in the DOM at reduced opacity so the
@@ -133,8 +151,8 @@
 .btn[data-loading="true"]::after {
   content: "";
   position: absolute;
-  width: 16px;
-  height: 16px;
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
   border-radius: var(--radius-pill);
   border: 2px solid var(--mist-72);
   border-top-color: var(--color-text-on-dark);
@@ -235,14 +253,36 @@
 .select {
   appearance: none;
   padding-right: var(--space-10);
-  background-image: none;
   cursor: pointer;
+  /* The chevron is a background-image layer, not a mask, and that is forced by
+   * the platform rather than chosen. A <select> is a closed-shadow host: it
+   * renders no ::before or ::after, so there is no box to hang a mask on except
+   * the control itself, and masking the control replaces its whole background
+   * with the mask paint. The mask paint is currentColor, which on this control
+   * is --color-text-primary, so the select's background collapses to its own
+   * label colour and the label vanishes into it at 1.00:1.
+   *
+   * A background-image composites over the surface instead, so the control
+   * keeps color.surface and the glyph sits on top of it. The path is the
+   * approved Lucide chevron from §10.1, byte-identical to icons.generated.ts,
+   * which is why this is not a second glyph; §10.1 forbids drawing a new one.
+   * The colour lives in the token rather than here, and §14 fixes a light-only
+   * theme over a closed palette, so the token is where a palette change belongs.
+   */
+  background-image: var(--icon-chevron-down);
+  background-repeat: no-repeat;
+  background-position: right var(--space-3) center;
+  background-size: var(--icon-size-md) var(--icon-size-md);
 }
 
+/* §8.2: the placeholder uses color.text-muted and never replaces a label, so it
+ * carries the token directly rather than a text colour faded with opacity. The
+ * token measures 3.23:1, which §3.4 restricts to nonessential text; a
+ * placeholder is that by definition, because §13 requires a persistent label on
+ * every field and design.md 8.2 names this exact token for this exact slot. */
 .input::placeholder,
 .textarea::placeholder {
-  color: var(--color-text-secondary);
-  opacity: 0.72;
+  color: var(--color-text-muted);
 }
 
 .input:hover,
@@ -257,6 +297,15 @@
   background: var(--color-surface-muted);
   color: var(--color-text-disabled);
   cursor: not-allowed;
+}
+
+/* The rule above sets `background`, and the shorthand resets background-image to
+ * none, which would drop the chevron. It is re-asserted after the shorthand so a
+ * disabled select still shows what it opens — in the disabled token, because an
+ * affordance that stays at full strength on a control nobody can open tells the
+ * reader the opposite of the truth. */
+.select:disabled {
+  background-image: var(--icon-chevron-down-disabled);
 }
 
 .input[readonly],
@@ -405,14 +454,17 @@
   outline-offset: var(--focus-ring-offset);
 }
 
-/* §7.3 FileInput. */
+/* §7.3 FileInput. §8.2 sets the border for every input, and §3.6 allows a
+ * dashed border only for an explicitly empty or unavailable state — a drop
+ * target with nothing chosen is a control in its default state, not one of
+ * those, so it takes the standard border like any other field. */
 .file-input {
   display: flex;
   align-items: center;
   gap: var(--space-4);
   min-height: var(--control-min);
   padding: var(--space-3) var(--space-4);
-  border: 1px dashed var(--color-border);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-control);
   background: var(--color-surface);
 }
@@ -493,8 +545,12 @@
   align-items: flex-start;
   gap: var(--space-3);
   padding: var(--space-4) var(--space-5);
+  /* §3.6 allows a standard 1px border and a strong 1px border, and no other
+   * width, so the emphasis is the strong colour on the left edge rather than a
+   * 4px rail. The 4px is on the §5.1 spacing scale, which is not what governs
+   * borders, so it could not be tokenised into compliance. */
   border: 1px solid var(--color-border);
-  border-left: 4px solid var(--color-border-strong);
+  border-left-color: var(--color-border-strong);
   border-radius: var(--radius-control);
   background: var(--color-surface);
   color: var(--color-text-primary);
@@ -520,6 +576,16 @@
 .alert__text {
   font: var(--text-body-small);
   color: var(--color-text-secondary);
+}
+
+/* The action row an Alert, an EmptyState and an ErrorState all reach for. It
+ * lives here rather than being repeated in each, so the three agree on the
+ * rhythm. */
+.alert__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
 }
 
 .alert--muted {
@@ -607,7 +673,10 @@
 .skeleton--line { height: 1em; }
 .skeleton--block { height: 120px; border-radius: var(--radius-card); }
 
-/* §12: every data surface has a clear empty, loading and error state. */
+/* §12: every data surface has a clear empty, loading and error state. §3.6
+ * allows a dashed border for exactly this — a surface that is explicitly empty
+ * or unavailable — so the one dashed border in the component layer is here and
+ * nowhere else. */
 .empty-state,
 .error-state {
   display: flex;
@@ -638,21 +707,46 @@
   max-width: var(--measure);
 }
 
-/* §8.6 Modal. Max width 640px, shadow.2, overlay from color.overlay.
- * Hidden by default; opened by a checkbox-free JS-free mechanism is out of
- * scope for a server-rendered page, so the dialog element is used natively. */
+/* §8.6 Modal. 640px maximum, shadow.2, surface color.surface, overlay
+ * color.overlay. The overlay is a separate fixed layer rather than a <dialog>
+ * backdrop, because the React Modal manages the escape key and the focus trap
+ * itself and needs the backdrop to be a clickable sibling; the ::backdrop
+ * pseudo-element could not be one. The layer is here rather than in shell.css
+ * so the whole §8.6 pair reads in one place. */
+.modal-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: var(--color-overlay);
+}
+
+/* The layer carries the overlay colour itself, so this is only the hit area: a
+ * click that is not on the dialog dismisses it, which is what a person reaching
+ * for Escape with the mouse expects. It is aria-hidden because Escape and the
+ * close control are the two paths a keyboard has. */
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+}
+
+/* The height is capped so a long body scrolls inside the dialog rather than
+ * pushing its own close action off the top of the viewport. §8.6 forbids a
+ * modal inside a modal, and this is what stops one from appearing to be one. */
 .modal {
   width: min(640px, calc(100vw - var(--space-8)));
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
   padding: 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-card);
   background: var(--color-surface);
   color: var(--color-text-primary);
   box-shadow: var(--shadow-2);
-}
-
-.modal::backdrop {
-  background: var(--color-overlay);
 }
 
 .modal__head {
@@ -673,32 +767,26 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+  /* The dialog is the height cap, so the body is what scrolls when the content
+   * is longer than the viewport. Head and actions stay put, which is what keeps
+   * the destructive action reachable on a short screen. */
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .modal__actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: var(--space-3);
   padding: var(--space-5) var(--space-6);
   border-top: 1px solid var(--color-border);
 }
 
-/* §8.6 Drawer. Widths 280, 360 or 420 only. */
-.drawer {
-  width: min(360px, calc(100vw - var(--space-8)));
-  max-height: 100vh;
-  margin: 0 0 0 auto;
-  padding: 0;
-  border: 1px solid var(--color-border);
-  border-right: 0;
-  border-radius: var(--radius-panel) 0 0 var(--radius-panel);
-  background: var(--color-surface);
-  box-shadow: var(--shadow-2);
-}
-
-.drawer::backdrop {
-  background: var(--color-overlay);
-}
+/* §8.6 Drawer. The shipped Drawer is the mobile navigation drawer in shell.css,
+ * whose rules are the ones that match the markup; these were a second, stale
+ * set written for a <dialog> version that no longer exists, and they disagreed
+ * with it about the border and the corner radii. Shell is the single home. */
 
 /* §7.4 Tooltip. Supplementary information only, never the sole label. */
 .tooltip-anchor {
@@ -828,7 +916,6 @@
   font: var(--text-heading-1);
   font-variant-numeric: tabular-nums;
   color: var(--color-text-primary);
-  line-height: 1.1;
 }
 
 .stat-card__meta {
@@ -966,18 +1053,30 @@
   overflow-wrap: anywhere;
 }
 
-/* §7.5 Tag. */
+/* §7.5 Tag. The default fill is surface-muted, where ink reads at 9.70:1. */
 .tag {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  padding: 2px var(--space-2);
+  padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-small);
   border: 1px solid var(--color-border);
   background: var(--color-surface-muted);
   color: var(--color-text-primary);
   font: var(--text-body-small);
   white-space: nowrap;
+}
+
+/* The emphasised tag fill, and the pairing §3.4 approves for it: ink on
+ * accent-periwinkle measures 5.25:1, which clears AA at body size. The obvious
+ * alternative does not — mist on accent-blue is 2.20:1 and ink on accent-blue is
+ * 4.41:1, so neither a light nor a dark label is safe on the stronger accent.
+ * A tag that needs to signal a state says it in words and a glyph per §10.3;
+ * this variant is emphasis, not status. */
+.tag--accent {
+  background: var(--color-accent-soft);
+  border-color: var(--color-border-strong);
+  color: var(--color-text-primary);
 }
 
 /* §7.5 Avatar. Initials only: no remote images, and the portal must work
@@ -999,7 +1098,11 @@
   text-transform: uppercase;
 }
 
-.avatar--sm { width: 32px; height: 32px; font-size: 12px; }
+/* 12px is not on the §4.2 scale. The nearest approved size is overline at 11px,
+ * which is the scale's own entry for short uppercase metadata, and the avatar
+ * is already uppercase. The 1px difference is below the threshold where a
+ * capital's height is distinguishable; 13px would not shrink the mark at all. */
+.avatar--sm { width: 32px; height: 32px; font: var(--text-overline); letter-spacing: var(--tracking-overline); }
 .avatar--lg { width: 56px; height: 56px; font: var(--text-heading-3); }
 
 /* §7.5 CodeBlock. */

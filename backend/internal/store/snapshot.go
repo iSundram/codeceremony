@@ -40,41 +40,48 @@ const SnapshotVersion = 1
 // place. Seeded identities are re-minted at every boot from the fixed token
 // table, so automation that attaches a documented header keeps working.
 type Snapshot struct {
-	Version        int                          `json:"version"`
-	SavedAt        time.Time                    `json:"saved_at"`
-	Seed           bool                         `json:"seeded"`
-	Users          []domain.User                `json:"users"`
-	Judges         []domain.JudgeProfile        `json:"judge_profiles"`
-	Conflicts      []domain.ConflictDeclaration `json:"conflict_declarations"`
-	Rubrics        []domain.Rubric              `json:"rubrics"`
-	Profiles       []domain.UserProfile         `json:"user_profiles"`
-	Events         []domain.Event               `json:"events"`
-	Tracks         []domain.Track               `json:"tracks"`
-	Prizes         []domain.Prize               `json:"prizes"`
-	Questions      []domain.HackathonQuestion   `json:"hackathon_questions"`
-	Milestones     []domain.HackathonMilestone  `json:"hackathon_milestones"`
-	Hosts          []domain.HackathonHost       `json:"hackathon_hosts"`
-	Roster         []domain.JudgeRosterEntry    `json:"judge_roster"`
-	Invites        []domain.TeamInvite          `json:"team_invites"`
-	Teams          []domain.Team                `json:"teams"`
-	Members        []domain.TeamMembership      `json:"team_memberships"`
-	Participations []domain.Participation       `json:"participations"`
-	Submissions    []domain.Submission          `json:"submissions"`
-	Versions       []domain.SubmissionVersion   `json:"submission_versions"`
-	Duplicates     []domain.DuplicateFlag       `json:"duplicate_flags"`
-	Assignments    []domain.Assignment          `json:"assignments"`
-	Comparisons    []domain.Comparison          `json:"comparisons"`
-	Reviews        []domain.Review              `json:"reviews"`
-	Comments       []domain.Comment             `json:"comments"`
-	Reports        []domain.CommentReport       `json:"comment_reports"`
-	Campaigns      []domain.VoteCampaign        `json:"vote_campaigns"`
-	Ballots        []domain.Ballot              `json:"ballots"`
-	Webhooks       []domain.Webhook             `json:"webhooks"`
-	Staff          []domain.EventStaff          `json:"event_staff"`
-	Activity       []domain.ActivityEntry       `json:"activity_entries"`
-	Notifications  []domain.Notification        `json:"notifications"`
-	AuditEvents    []domain.AuditEvent          `json:"audit_events"`
-	Grants         []authz.Grant                `json:"grants"`
+	Version int           `json:"version"`
+	SavedAt time.Time     `json:"saved_at"`
+	Seed    bool          `json:"seeded"`
+	Users   []domain.User `json:"users"`
+	// MailPreferences and UnsubscribeTokens are here because Restore used to
+	// rebuild both maps as empty. A restart therefore reverted every recorded
+	// opt-out to the defaults, which is the failure a GDPR-style unsubscribe
+	// exists to prevent, and it invalidated every unsubscribe link already in an
+	// inbox — the links are mailed with a digest and redeemed days later.
+	MailPreferences []domain.MailPreferences     `json:"mail_preferences"`
+	Unsubscribe     []domain.UnsubscribeToken    `json:"unsubscribe_tokens"`
+	Judges          []domain.JudgeProfile        `json:"judge_profiles"`
+	Conflicts       []domain.ConflictDeclaration `json:"conflict_declarations"`
+	Rubrics         []domain.Rubric              `json:"rubrics"`
+	Profiles        []domain.UserProfile         `json:"user_profiles"`
+	Events          []domain.Event               `json:"events"`
+	Tracks          []domain.Track               `json:"tracks"`
+	Prizes          []domain.Prize               `json:"prizes"`
+	Questions       []domain.HackathonQuestion   `json:"hackathon_questions"`
+	Milestones      []domain.HackathonMilestone  `json:"hackathon_milestones"`
+	Hosts           []domain.HackathonHost       `json:"hackathon_hosts"`
+	Roster          []domain.JudgeRosterEntry    `json:"judge_roster"`
+	Invites         []domain.TeamInvite          `json:"team_invites"`
+	Teams           []domain.Team                `json:"teams"`
+	Members         []domain.TeamMembership      `json:"team_memberships"`
+	Participations  []domain.Participation       `json:"participations"`
+	Submissions     []domain.Submission          `json:"submissions"`
+	Versions        []domain.SubmissionVersion   `json:"submission_versions"`
+	Duplicates      []domain.DuplicateFlag       `json:"duplicate_flags"`
+	Assignments     []domain.Assignment          `json:"assignments"`
+	Comparisons     []domain.Comparison          `json:"comparisons"`
+	Reviews         []domain.Review              `json:"reviews"`
+	Comments        []domain.Comment             `json:"comments"`
+	Reports         []domain.CommentReport       `json:"comment_reports"`
+	Campaigns       []domain.VoteCampaign        `json:"vote_campaigns"`
+	Ballots         []domain.Ballot              `json:"ballots"`
+	Webhooks        []domain.Webhook             `json:"webhooks"`
+	Staff           []domain.EventStaff          `json:"event_staff"`
+	Activity        []domain.ActivityEntry       `json:"activity_entries"`
+	Notifications   []domain.Notification        `json:"notifications"`
+	AuditEvents     []domain.AuditEvent          `json:"audit_events"`
+	Grants          []authz.Grant                `json:"grants"`
 }
 
 // Snapshot captures the current durable state.
@@ -126,10 +133,17 @@ func (s *Store) Snapshot() Snapshot {
 	}
 
 	for _, user := range s.users {
-		// A password hash must never reach a data file: a backup is the most
-		// likely thing to be copied around, and a hash is a credential.
-		user.PasswordHash = ""
+		// The bcrypt hash is persisted. See domain.User.PasswordHash for why
+		// that trade was made and what it costs: the data file is now something
+		// to protect, and it always was, because it holds every review, every
+		// grant and every audit entry in the event.
 		snapshot.Users = append(snapshot.Users, user)
+	}
+	for _, preferences := range s.mailPreferences {
+		snapshot.MailPreferences = append(snapshot.MailPreferences, preferences)
+	}
+	for _, token := range s.unsubscribe {
+		snapshot.Unsubscribe = append(snapshot.Unsubscribe, token)
 	}
 	for _, profile := range s.judgeProfiles {
 		snapshot.Judges = append(snapshot.Judges, profile)
@@ -279,6 +293,28 @@ func (s *Store) Snapshot() Snapshot {
 // discarded, and the secondary email index and composite-keyed maps are rebuilt
 // from scratch rather than merged, so a restore can never leave a stale index
 // pointing at a row that is no longer there.
+// AccountCredentialHealth reports whether a restored store can authenticate
+// anyone at all, and how many accounts it can.
+//
+// It exists because the failure it catches is silent by construction. Password
+// hashes were not persisted, so a restart produced a store full of accounts and
+// zero passwords: every login returned 401, no route reported anything wrong,
+// and the only credentials that still worked were the fixed public seed tokens.
+// An operator sees a healthy portal and a login page that never works. A boot
+// that checks this can refuse, or at least say so, instead.
+func (s *Store) AccountCredentialHealth() (withHash, withoutHash int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, user := range s.users {
+		if user.PasswordHash == "" {
+			withoutHash++
+			continue
+		}
+		withHash++
+	}
+	return withHash, withoutHash
+}
+
 func (s *Store) Restore(snapshot Snapshot) error {
 	if snapshot.Version != SnapshotVersion {
 		return ErrSnapshotVersion
@@ -322,19 +358,27 @@ func (s *Store) Restore(snapshot Snapshot) error {
 	s.grants = make(map[string]authz.Grant, len(snapshot.Grants))
 	s.mail = make(map[string]domain.MailMessage)
 	s.mailByDedupe = make(map[string]domain.MailMessage)
-	s.mailPreferences = make(map[string]domain.MailPreferences)
+	s.mailPreferences = make(map[string]domain.MailPreferences, len(snapshot.MailPreferences))
 	s.deliveries = make(map[string]domain.WebhookDelivery)
-	s.unsubscribe = make(map[string]domain.UnsubscribeToken)
+	s.unsubscribe = make(map[string]domain.UnsubscribeToken, len(snapshot.Unsubscribe))
 
-	// Password hashes are never persisted, so a restored user cannot log in
-	// until a password is set. Accounts seeded at boot keep the seeded hash
-	// because seeding runs after the restore.
+	// A password field must hold a bcrypt hash or nothing. A value that is
+	// present but not a bcrypt hash is a plaintext password in a data file, and
+	// that is refused rather than accepted and compared against: accepting it
+	// would mean the portal authenticating against a secret it stores in the
+	// clear, and the whole point of hashing is that it never has to.
 	for _, user := range snapshot.Users {
-		if user.PasswordHash != "" {
+		if user.PasswordHash != "" && !strings.HasPrefix(user.PasswordHash, "$2") {
 			return ErrSnapshotContainsSecrets
 		}
 		s.users[user.ID] = user
 		s.usersByMail[strings.ToLower(user.Email)] = user.ID
+	}
+	for _, preferences := range snapshot.MailPreferences {
+		s.mailPreferences[preferences.UserID] = preferences
+	}
+	for _, token := range snapshot.Unsubscribe {
+		s.unsubscribe[token.Token] = token
 	}
 	for _, profile := range snapshot.Judges {
 		s.judgeProfiles[profile.UserID] = profile

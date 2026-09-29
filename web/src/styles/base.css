@@ -167,6 +167,10 @@ pre {
 .cluster-end { justify-content: flex-end; }
 .cluster-between { justify-content: space-between; }
 .cluster-baseline { align-items: baseline; }
+/* For a cluster of things that must not wrap — a button group, a row of counts.
+ * §5.4 forbids hiding essential content at narrow widths, so a caller that uses
+ * this owes the caller above a stacked alternative. */
+.cluster-nowrap { flex-wrap: nowrap; }
 
 /* §5.2: content grid is 12 columns with a 24px gap. */
 .grid {

@@ -1,6 +1,7 @@
 package mailer
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
@@ -24,8 +25,10 @@ type Message struct {
 	HTML    string
 }
 
+// Sender takes a context so a single delivery can be bounded by the dispatcher
+// instead of by the slowest relay the network offers.
 type Sender interface {
-	Send(Message) error
+	Send(ctx context.Context, message Message) error
 	Name() string
 }
 
@@ -42,7 +45,10 @@ func NewLogSender(logger *slog.Logger) *LogSender {
 
 func (s *LogSender) Name() string { return "log" }
 
-func (s *LogSender) Send(message Message) error {
+func (s *LogSender) Send(ctx context.Context, message Message) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.logger.Info("mail delivered to log sink",
 		"to", message.To,
 		"subject", message.Subject,
@@ -54,25 +60,22 @@ func (s *LogSender) Send(message Message) error {
 type SMTPSender struct {
 	cfg     config.Config
 	logger  *slog.Logger
-	dialTLS func(address string, tlsConfig *tls.Config) (net.Conn, error)
+	dialTLS func(ctx context.Context, address string, tlsConfig *tls.Config) (net.Conn, error)
 }
 
 func NewSMTPSender(cfg config.Config, logger *slog.Logger) *SMTPSender {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &SMTPSender{cfg: cfg, logger: logger, dialTLS: func(address string, tlsConfig *tls.Config) (net.Conn, error) {
-		conn, err := tls.Dial("tcp", address, tlsConfig)
-		if err != nil {
-			return nil, err
-		}
-		return conn, nil
+	return &SMTPSender{cfg: cfg, logger: logger, dialTLS: func(ctx context.Context, address string, tlsConfig *tls.Config) (net.Conn, error) {
+		dialer := &tls.Dialer{NetDialer: &net.Dialer{}, Config: tlsConfig}
+		return dialer.DialContext(ctx, "tcp", address)
 	}}
 }
 
 func (s *SMTPSender) Name() string { return "smtp" }
 
-func (s *SMTPSender) Send(message Message) error {
+func (s *SMTPSender) Send(ctx context.Context, message Message) error {
 	from := s.cfg.SMTPFrom
 	if message.From != "" {
 		from = message.From
@@ -83,15 +86,16 @@ func (s *SMTPSender) Send(message Message) error {
 	var err error
 	switch s.cfg.SMTPEncryption {
 	case "tls":
-		conn, err = s.dialTLS(address, &tls.Config{ServerName: s.cfg.SMTPHost, MinVersion: tls.VersionTLS12})
+		conn, err = s.dialTLS(ctx, address, &tls.Config{ServerName: s.cfg.SMTPHost, MinVersion: tls.VersionTLS12})
 	default:
-		conn, err = net.DialTimeout("tcp", address, timeout)
+		dialer := &net.Dialer{Timeout: timeout}
+		conn, err = dialer.DialContext(ctx, "tcp", address)
 	}
 	if err != nil {
 		return fmt.Errorf("dial smtp: %w", err)
 	}
 	defer conn.Close()
-	if err := conn.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
+	if err := conn.SetDeadline(deadlineFor(ctx, 30*time.Second)); err != nil {
 		return fmt.Errorf("smtp deadline: %w", err)
 	}
 	client, err := smtp.NewClient(conn, s.cfg.SMTPHost)
@@ -177,6 +181,15 @@ func preview(value string) string {
 		return collapsed[:120] + "..."
 	}
 	return collapsed
+}
+
+// deadlineFor prefers the caller's deadline over the session timeout, so a
+// dispatch-level budget can shorten a conversation but never extend it.
+func deadlineFor(ctx context.Context, session time.Duration) time.Time {
+	if deadline, ok := ctx.Deadline(); ok && deadline.Before(time.Now().Add(session)) {
+		return deadline
+	}
+	return time.Now().Add(session)
 }
 
 func NewSender(cfg config.Config, logger *slog.Logger) Sender {

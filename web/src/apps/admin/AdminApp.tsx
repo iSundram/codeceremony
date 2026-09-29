@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Route, Routes } from "react-router-dom";
 
-import { Alert, Badge, EmptyState, ErrorState, Skeleton, Status } from "../../components/feedback";
+import { Alert, Badge, EmptyState, ErrorState, Modal, Skeleton, Status } from "../../components/feedback";
 import { Button, LinkButton, SearchField } from "../../components/controls";
 import { PageHead, TabLink, Tabs } from "../../components/shell";
 import {
@@ -92,6 +92,7 @@ function Accounts() {
 
   useEffect(() => {
     let live = true;
+    setError(null);
     void (async () => {
       try {
         const response = await fetch("/v1/admin/users", { credentials: "include" });
@@ -214,6 +215,7 @@ function PlatformAudit() {
 
   useEffect(() => {
     let live = true;
+    setError(null);
     void (async () => {
       try {
         const [listing, verified] = await Promise.all([api.audit({ limit: 200 }), api.verifyAudit()]);
@@ -279,6 +281,18 @@ function PlatformAudit() {
       {error ? <ErrorState title="The audit trail could not be loaded" body={error} /> : null}
       {!entries && !error ? <Skeleton lines={5} /> : null}
 
+      {entries && shown.length === 0 ? (
+        <EmptyState
+          title="No entries match"
+          body={
+            entries.length === 0
+              ? "The log is empty. Decisions appear here as the portal is used."
+              : "Nothing in the log has been refused yet. Uncheck “Refusals only” to see every decision."
+          }
+          icon="shield"
+        />
+      ) : null}
+
       {shown.length > 0 ? (
         <Table caption="Newest first.">
           <thead>
@@ -320,9 +334,18 @@ function PlatformAudit() {
 function PlatformGrants() {
   const [grants, setGrants] = useState<Grant[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Revoking is immediate and cannot be undone, so the row is held until the
+  // confirmation is answered rather than acted on the first click.
+  const [revoking, setRevoking] = useState<Grant | null>(null);
+  const [revokeError, setRevokeError] = useState<string | null>(null);
+  const [revokeBusy, setRevokeBusy] = useState(false);
+  // A ref as well as the state: the disabled button only stops the second click
+  // once React has re-rendered, and two clicks in one batch read the same value.
+  const revokingRef = useRef(false);
 
   useEffect(() => {
     let live = true;
+    setError(null);
     api
       .grants()
       .then((response) => live && setGrants(response.data))
@@ -331,6 +354,25 @@ function PlatformGrants() {
       live = false;
     };
   }, []);
+
+  async function revoke() {
+    if (!revoking || revokingRef.current) return;
+    revokingRef.current = true;
+    setRevokeBusy(true);
+    setRevokeError(null);
+    try {
+      await api.revokeGrant(revoking.id);
+      setGrants((current) => (current ?? []).filter((row) => row.id !== revoking.id));
+      setRevoking(null);
+    } catch (caught) {
+      // Without this the rejection was unhandled: the row stayed exactly where
+      // it was and nothing said why, which reads as a button that does nothing.
+      setRevokeError(describe(caught));
+    } finally {
+      revokingRef.current = false;
+      setRevokeBusy(false);
+    }
+  }
 
   return (
     <div className="stack stack-6">
@@ -351,6 +393,11 @@ function PlatformGrants() {
       </Card>
 
       {error ? <ErrorState title="Grants could not be loaded" body={error} /> : null}
+      {revokeError ? (
+        <Alert kind="error" title="That grant was not revoked">
+          {revokeError} The grant is still in force.
+        </Alert>
+      ) : null}
       {!grants && !error ? <Skeleton lines={4} /> : null}
 
       {grants ? (
@@ -392,10 +439,10 @@ function PlatformGrants() {
                     <Button
                       variant="ghost"
                       icon="trash-2"
+                      type="button"
                       onClick={() => {
-                        void api.revokeGrant(grant.id).then(() => {
-                          setGrants((current) => (current ?? []).filter((row) => row.id !== grant.id));
-                        });
+                        setRevokeError(null);
+                        setRevoking(grant);
                       }}
                     >
                       Revoke
@@ -407,6 +454,35 @@ function PlatformGrants() {
           </Table>
         )
       ) : null}
+
+      <Modal
+        open={revoking !== null}
+        title="Revoke this grant?"
+        onClose={() => {
+          if (!revokeBusy) setRevoking(null);
+        }}
+        closeLabel="Keep the grant"
+        actions={
+          <>
+            <Button variant="tertiary" type="button" disabled={revokeBusy} onClick={() => setRevoking(null)}>
+              Keep it
+            </Button>
+            <Button variant="ghost" icon="trash-2" type="button" loading={revokeBusy} onClick={() => void revoke()}>
+              Revoke
+            </Button>
+          </>
+        }
+      >
+        <p>
+          {revoking ? (
+            <>
+              <InlineCode>{revoking.action}</InlineCode> for <strong>{revoking.user_id}</strong>{" "}
+              {revoking.allow ? "will stop being allowed" : "will stop being denied"} immediately. It
+              cannot be restored from here, and the decision is recorded in the audit trail.
+            </>
+          ) : null}
+        </p>
+      </Modal>
     </div>
   );
 }

@@ -52,5 +52,14 @@ coverage/
 
 # The built frontend is a build artifact and is never committed. The build
 # embeds it into the binary, so the image carries it; the repository does not.
+# The one state file. DATA_DIR defaults to ./data and the journal writes
+# portal.json inside it, so a local run leaves real event data — every review,
+# every grant, every audit entry, and now every password hash — in the working
+# tree. Nothing under a data directory is ever committed.
+backend/data/
+data/
+portal.json
+**/portal.json
+
 backend/internal/httpapi/webassets/spa/*
 !backend/internal/httpapi/webassets/spa/.gitkeep

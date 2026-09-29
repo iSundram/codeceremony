@@ -1,8 +1,10 @@
 package persistence
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,15 +13,21 @@ import (
 	"github.com/iSundram/codeceremony/backend/internal/store"
 )
 
+// testBcryptHash is a well-formed bcrypt digest used only as a fixture. It is
+// not the hash of any password; the store never verifies it in these tests. It
+// is shaped correctly because the restore path rejects a password field that is
+// not a bcrypt hash, which is how a plaintext password in a data file is caught.
+const testBcryptHash = "$2a$10$4M0PJg2VnNWu3T3vB2n1ueOY0Q7Zt3YbM2Xh1Kq1L9pG4Q6r0zC"
+
 func testStore(t *testing.T) *store.Store {
 	t.Helper()
 	created := time.Date(2026, time.February, 1, 12, 0, 0, 0, time.UTC)
 	submitted := time.Date(2026, time.February, 28, 22, 14, 0, 0, time.UTC)
 	data := seed.Data{
 		Users: []domain.User{
-			{ID: "organizer", Email: "organizer@example.org", DisplayName: "Rhea", Role: domain.RoleOrganizer, State: domain.AccountActive, PasswordHash: "hash", CreatedAt: created},
-			{ID: "judge_a", Email: "judge-a@example.org", DisplayName: "JA", Role: domain.RoleJudge, State: domain.AccountActive, PasswordHash: "hash", CreatedAt: created},
-			{ID: "participant", Email: "participant@example.org", DisplayName: "Pia", Role: domain.RoleParticipant, State: domain.AccountActive, PasswordHash: "hash", CreatedAt: created},
+			{ID: "organizer", Email: "organizer@example.org", DisplayName: "Rhea", Role: domain.RoleOrganizer, State: domain.AccountActive, PasswordHash: testBcryptHash, CreatedAt: created},
+			{ID: "judge_a", Email: "judge-a@example.org", DisplayName: "JA", Role: domain.RoleJudge, State: domain.AccountActive, PasswordHash: testBcryptHash, CreatedAt: created},
+			{ID: "participant", Email: "participant@example.org", DisplayName: "Pia", Role: domain.RoleParticipant, State: domain.AccountActive, PasswordHash: testBcryptHash, CreatedAt: created},
 		},
 		Events: []domain.Event{{
 			ID: "evt_01", Slug: "sample", Name: "Sample", Timezone: "UTC",
@@ -89,14 +97,78 @@ func TestSnapshotCarriesEveryCollection(t *testing.T) {
 	}
 }
 
-// A password hash is a credential. It must never reach a data file, because a
-// data file is the thing that gets copied between machines.
-func TestSnapshotNeverCarriesPasswordHashes(t *testing.T) {
+// The bcrypt hash is persisted, and the plaintext is not — which is the whole
+// point of hashing it. The data file has to be protected like any other
+// credential store now, and it always had to be: it holds every review, every
+// grant and every audit entry in the event.
+//
+// The inverse decision — never persisting the hash — was tried and reverted. It
+// destroyed every account's password on restart, so the only credentials that
+// still worked afterwards were the fixed public seed tokens, and a portal
+// configured for production had no way in at all.
+func TestSnapshotCarriesBcryptHashesAndNeverAPlaintextPassword(t *testing.T) {
 	snapshot := testStore(t).Snapshot()
+	carried := 0
 	for _, user := range snapshot.Users {
-		if user.PasswordHash != "" {
-			t.Errorf("user %s carried a password hash into the snapshot", user.ID)
+		if user.PasswordHash == "" {
+			continue
 		}
+		carried++
+		if !strings.HasPrefix(user.PasswordHash, "$2") {
+			t.Errorf("user %s: password hash is not bcrypt: %q", user.ID, user.PasswordHash)
+		}
+	}
+	if carried == 0 {
+		t.Fatal("no password hash was persisted at all, so a restart would destroy every password again")
+	}
+
+	// And the loader refuses a value that is not a hash, which is what stops a
+	// plaintext password in a data file from being trusted as a credential.
+	plaintext := snapshot
+	plaintext.Users = append([]domain.User(nil), snapshot.Users...)
+	plaintext.Users[0].PasswordHash = "hunter2"
+	if err := store.New(seed.Data{}).Restore(plaintext); !errors.Is(err, store.ErrSnapshotContainsSecrets) {
+		t.Errorf("Restore() with a plaintext password = %v, want ErrSnapshotContainsSecrets", err)
+	}
+}
+
+// Mail preferences and unsubscribe tokens are part of the state, not a cache.
+// Both maps used to be rebuilt empty by Restore, which reverted every recorded
+// opt-out and invalidated every unsubscribe link already sitting in an inbox.
+func TestRestoreKeepsMailPreferencesAndUnsubscribeTokens(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "portal.json")
+
+	original := testStore(t)
+	if _, err := original.SaveMailPreferences(domain.MailPreferences{
+		UserID: "participant", Marketing: false, WeeklyDigest: true, DigestOnly: true,
+	}); err != nil {
+		t.Fatalf("SaveMailPreferences() error = %v", err)
+	}
+	if _, err := original.SaveUnsubscribeToken(domain.UnsubscribeToken{
+		Token: "tok-persist", UserID: "participant", Scope: "weekly_digest",
+		ExpiresAt: time.Now().Add(72 * time.Hour),
+	}); err != nil {
+		t.Fatalf("CreateUnsubscribeToken() error = %v", err)
+	}
+
+	journal := New(original, path, time.Second, nil)
+	if err := journal.Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+
+	restored := store.New(seed.Data{})
+	ok, err := New(restored, path, time.Second, nil).Restore()
+	if err != nil || !ok {
+		t.Fatalf("Restore() = %v, %v; want true, nil", ok, err)
+	}
+
+	preferences := restored.MailPreferences("participant")
+	if !preferences.WeeklyDigest || !preferences.DigestOnly || preferences.Marketing {
+		t.Errorf("mail preferences were not restored: %+v", preferences)
+	}
+	if _, err := restored.UnsubscribeTokenByValue("tok-persist"); err != nil {
+		t.Errorf("the unsubscribe token did not survive a restart: %v", err)
 	}
 }
 

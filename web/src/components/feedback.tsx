@@ -1,6 +1,7 @@
-import type { ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 
 import { Icon, type IconName } from "../lib/icons";
+import { IconButton } from "./controls";
 
 /**
  * Feedback, status and data-display components.
@@ -206,3 +207,104 @@ export function LoadingState({ label = "Loading" }: { label?: string }) {
     </div>
   );
 }
+
+// ---- 7.4 Modal ------------------------------------------------------------
+
+/** The controls the focus trap walks. Inputs are in the list because a
+ * confirmation can ask for a reason to be typed, and a field is focusable like
+ * any other control. */
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+export interface ModalProps {
+  open: boolean;
+  /** Required. §13: a dialog with no name is a dialog nobody can find again. */
+  title: string;
+  children?: ReactNode;
+  /** The footer. §10.3 puts a destructive action here, apart from the primary. */
+  actions?: ReactNode;
+  onClose: () => void;
+  /** The accessible name of the close control, and the words on nothing. */
+  closeLabel?: string;
+}
+
+/**
+ * design.md 7.4 and 8.6. The confirmation surface for the two irreversible
+ * actions the portal has — revoking a grant, and locking a submitted review —
+ * because §10.3 requires a confirmation Modal for a destructive action and §12
+ * allows confirmation for nothing else.
+ *
+ * The dialog is a div with role="dialog" rather than a native <dialog>, so that
+ * the backdrop can be a clickable sibling and the focus trap is explicit. The
+ * trap is the same one the navigation drawer uses: Tab is wrapped at both ends
+ * so focus cannot reach the page behind, which is still rendered and still
+ * focusable, and focus returns to whatever opened the dialog on close. A
+ * confirmation a keyboard user can tab out of is not a confirmation.
+ */
+export function Modal({ open, title, children, actions, onClose, closeLabel = "Close" }: ModalProps) {
+  const panel = useRef<HTMLDivElement>(null);
+  const trigger = useRef<Element | null>(null);
+  const titleId = useId();
+
+  useEffect(() => {
+    trigger.current = document.activeElement;
+    if (!open) return;
+
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab" || !panel.current) return;
+      const focusable = panel.current.querySelectorAll<HTMLElement>(FOCUSABLE);
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!first || !last) return;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    document.addEventListener("keydown", onKey);
+    // Focus lands inside rather than staying on the control behind, which is
+    // behind the backdrop and, to a screen reader, still the current context.
+    const target = panel.current?.querySelector<HTMLElement>(FOCUSABLE) ?? panel.current;
+    target?.focus();
+
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      (trigger.current as HTMLElement | null)?.focus();
+    };
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div className="modal-layer">
+      <div className="modal-backdrop" onClick={onClose} aria-hidden="true" />
+      <div
+        className="modal"
+        ref={panel}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+      >
+        <div className="modal__head">
+          <h2 className="modal__title" id={titleId}>
+            {title}
+          </h2>
+          <IconButton icon="x" label={closeLabel} onClick={onClose} />
+        </div>
+        {children ? <div className="modal__body">{children}</div> : null}
+        {actions ? <div className="modal__actions">{actions}</div> : null}
+      </div>
+    </div>
+  );
+}
+

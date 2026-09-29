@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Route, Routes, useSearchParams } from "react-router-dom";
 
-import { Alert, Badge, EmptyState, ErrorState, Progress, Skeleton, Status } from "../../components/feedback";
+import { Alert, Badge, EmptyState, ErrorState, Modal, Progress, Skeleton, Status } from "../../components/feedback";
 import { Button, Field, LinkButton, SearchField, Select } from "../../components/controls";
 import { PageHead, TabLink, Tabs } from "../../components/shell";
 import {
@@ -27,7 +27,7 @@ import {
   type JudgeRow,
   type Progress as EventProgress,
   type Project,
-  type ResultRow,
+  type ResultsSummary,
 } from "../../lib/api";
 import { isStaff, useSession } from "../../lib/session";
 
@@ -87,19 +87,49 @@ function OrganizerTabs({ active }: { active: string }) {
 
 function useEvent() {
   const [events, setEvents] = useState<EventSummary[]>([]);
+  const [eventsError, setEventsError] = useState<string | null>(null);
   const [params, setParams] = useSearchParams();
   const eventSlug = params.get("event") ?? events[0]?.slug ?? "";
   useEffect(() => {
     let live = true;
     api
       .events()
-      .then((response) => live && setEvents(response.data))
-      .catch(() => undefined);
+      .then((response) => {
+        if (!live) return;
+        setEvents(response.data);
+        setEventsError(null);
+      })
+      // Swallowing this left eventSlug empty, so every view below ran its
+      // effect, got nothing, and sat on its skeleton for the life of the page
+      // with nothing to tell the organizer why.
+      .catch((caught) => live && setEventsError(describe(caught)));
     return () => {
       live = false;
     };
   }, []);
-  return { events, eventSlug, setParams };
+  return { events, eventSlug, setParams, eventsError };
+}
+
+/**
+ * Project titles for the standings.
+ *
+ * A results row is keyed by project_id and carries no title, so the names come
+ * from the project listing. That listing is paged at 24 a page and a leaderboard
+ * routinely carries more rows than one page returns, so every page is read
+ * rather than the first.
+ */
+async function loadProjectTitles(slug: string): Promise<Map<string, string>> {
+  const titles = new Map<string, string>();
+  const first = await api.projects(slug);
+  for (const project of first.data) titles.set(project.id, project.title);
+  const pages = Math.ceil(first.meta.total / Math.max(1, first.meta.page_size));
+  const rest = await Promise.all(
+    Array.from({ length: Math.max(0, pages - 1) }, (_, index) => api.projects(slug, { page: index + 2 })),
+  );
+  for (const response of rest) {
+    for (const project of response.data) titles.set(project.id, project.title);
+  }
+  return titles;
 }
 
 function EventPicker({
@@ -136,7 +166,7 @@ function EventPicker({
  * those need different interventions.
  */
 function ProgressApp() {
-  const { events, eventSlug, setParams } = useEvent();
+  const { events, eventSlug, setParams, eventsError } = useEvent();
   const [progress, setProgress] = useState<EventProgress | null>(null);
   const [panel, setPanel] = useState<JudgeRow[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -145,6 +175,7 @@ function ProgressApp() {
     if (!eventSlug) return;
     let live = true;
     setProgress(null);
+    setError(null);
     void (async () => {
       try {
         const [loadedProgress, loadedPanel] = await Promise.all([
@@ -163,8 +194,10 @@ function ProgressApp() {
     };
   }, [eventSlug]);
 
-  if (error) return <ErrorState title="Progress could not be loaded" body={error} />;
-
+  // Above every return. It used to sit below `if (error) return`, so the first
+  // failed fetch changed the hook count between renders and React unmounted the
+  // whole tree with "Rendered fewer hooks than expected" — and with no error
+  // boundary above it, the organizer got a blank page instead of a message.
   const notStarted = useMemo(
     () => panel.filter((judge) => judge.assigned > 0 && judge.started === 0),
     [panel],
@@ -184,7 +217,9 @@ function ProgressApp() {
       <EventPicker events={events} eventSlug={eventSlug} setParams={setParams} />
       <OrganizerTabs active="progress" />
 
-      {!progress ? <Skeleton lines={4} /> : null}
+      {eventsError ? <ErrorState title="The event list could not be loaded" body={eventsError} /> : null}
+      {error ? <ErrorState title="Progress could not be loaded" body={error} /> : null}
+      {!progress && !error && !eventsError ? <Skeleton lines={4} /> : null}
 
       {progress ? (
         <>
@@ -276,7 +311,7 @@ function PanelTable({ panel }: { panel: JudgeRow[] }) {
 }
 
 function SubmissionsApp() {
-  const { events, eventSlug, setParams } = useEvent();
+  const { events, eventSlug, setParams, eventsError } = useEvent();
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -285,6 +320,7 @@ function SubmissionsApp() {
     if (!eventSlug) return;
     let live = true;
     setProjects(null);
+    setError(null);
     api
       .projects(eventSlug, query ? { q: query } : {})
       .then((response) => live && setProjects(response.data))
@@ -300,8 +336,9 @@ function SubmissionsApp() {
       <EventPicker events={events} eventSlug={eventSlug} setParams={setParams} />
       <OrganizerTabs active="submissions" />
       <SearchField id="submission-search" label="Search" value={query} onChange={setQuery} />
+      {eventsError ? <ErrorState title="The event list could not be loaded" body={eventsError} /> : null}
       {error ? <ErrorState title="Submissions could not be loaded" body={error} /> : null}
-      {!projects && !error ? <Skeleton lines={4} /> : null}
+      {!projects && !error && !eventsError ? <Skeleton lines={4} /> : null}
       {projects ? (
         projects.length === 0 ? (
           <EmptyState title="Nothing submitted" body="No project matches that search." icon="folder-kanban" />
@@ -337,7 +374,7 @@ function SubmissionsApp() {
 }
 
 function PanelApp() {
-  const { events, eventSlug, setParams } = useEvent();
+  const { events, eventSlug, setParams, eventsError } = useEvent();
   const [panel, setPanel] = useState<JudgeRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -345,6 +382,7 @@ function PanelApp() {
     if (!eventSlug) return;
     let live = true;
     setPanel(null);
+    setError(null);
     api
       .panel(eventSlug)
       .then((response) => live && setPanel(response.data))
@@ -359,45 +397,78 @@ function PanelApp() {
       <PageHead title="The panel" lede="Who is judging, what they carry, and what is outstanding." />
       <EventPicker events={events} eventSlug={eventSlug} setParams={setParams} />
       <OrganizerTabs active="panel" />
+      {eventsError ? <ErrorState title="The event list could not be loaded" body={eventsError} /> : null}
       {error ? <ErrorState title="The panel could not be loaded" body={error} /> : null}
-      {!panel && !error ? <Skeleton lines={4} /> : null}
+      {!panel && !error && !eventsError ? <Skeleton lines={4} /> : null}
       {panel ? <PanelTable panel={panel} /> : null}
     </div>
   );
 }
 
+/**
+ * The standings.
+ *
+ * The endpoint returns a judging summary rather than a row array: the method
+ * that produced it, the whole fit, and the per-project rows under `projects`.
+ * It was read as a row array, so `rows.map` never ran and every cell was blank.
+ */
 function ResultsApp() {
-  const { events, eventSlug, setParams } = useEvent();
-  const [rows, setRows] = useState<ResultRow[] | null>(null);
-  const [method, setMethod] = useState<string>("");
+  const { events, eventSlug, setParams, eventsError } = useEvent();
+  const [summary, setSummary] = useState<ResultsSummary | null>(null);
+  const [titles, setTitles] = useState<Map<string, string>>(new Map());
   const [error, setError] = useState<string | null>(null);
   const [publishError, setPublishError] = useState<string | null>(null);
+  const [published, setPublished] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  // A ref as well as the state: the disabled button stops the second click
+  // after React has re-rendered, but two clicks inside one batch both read the
+  // same stale state, and publishing mails every team on the event.
+  const publishingRef = useRef(false);
 
   useEffect(() => {
     if (!eventSlug) return;
     let live = true;
-    setRows(null);
-    api
-      .results(eventSlug)
-      .then((response) => {
+    setSummary(null);
+    setTitles(new Map());
+    setError(null);
+    void (async () => {
+      try {
+        const [results, projectTitles] = await Promise.all([
+          api.results(eventSlug),
+          // A project list that fails must not blank the standings, so a row
+          // falls back to its own id rather than to a missing title.
+          loadProjectTitles(eventSlug).catch(() => new Map<string, string>()),
+        ]);
         if (!live) return;
-        setRows(response.data);
-        setMethod(response.method);
-      })
-      .catch((caught) => live && setError(describe(caught)));
+        setSummary(results.data);
+        setTitles(projectTitles);
+      } catch (caught) {
+        if (live) setError(describe(caught));
+      }
+    })();
     return () => {
       live = false;
     };
   }, [eventSlug]);
 
   async function publish() {
+    if (publishingRef.current) return;
+    publishingRef.current = true;
+    setPublishing(true);
     setPublishError(null);
+    setPublished(false);
     try {
       await api.publishResults(eventSlug);
+      setPublished(true);
     } catch (caught) {
       setPublishError(describe(caught));
+    } finally {
+      publishingRef.current = false;
+      setPublishing(false);
     }
   }
+
+  const rows = summary?.projects ?? [];
 
   return (
     <div className="stack stack-6">
@@ -413,63 +484,101 @@ function ResultsApp() {
           {publishError}
         </Alert>
       ) : null}
+      {published ? (
+        <Alert kind="success" title="Results published">
+          The leaderboard is public and the teams have been notified. The publication is in the
+          audit trail.
+        </Alert>
+      ) : null}
 
+      {eventsError ? <ErrorState title="The event list could not be loaded" body={eventsError} /> : null}
       {error ? <ErrorState title="Results could not be loaded" body={error} /> : null}
-      {!rows && !error ? <Skeleton lines={5} /> : null}
+      {!summary && !error && !eventsError ? <Skeleton lines={5} /> : null}
 
-      {rows ? (
+      {summary ? (
         <>
-          <Alert kind="info" title={`Computed by ${method}`}>
+          <Alert kind="info" title={`Computed by ${summary.method}`}>
             Every judge is calibrated against themselves and shrunk toward the panel before the
             aggregate, so one lenient judge cannot move the standings. JUDGING.md explains why, and
             shows what happens to a judge who rates everything identically.
           </Alert>
-          <Table caption="The normalized standings. A low-information review is flagged rather than dropped.">
-            <thead>
-              <tr>
-                <Th numeric>Rank</Th>
-                <Th>Project</Th>
-                <Th numeric>Normalized</Th>
-                <Th numeric>Raw</Th>
-                <Th numeric>Reviews</Th>
-                <Th>Notes</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <Tr key={row.project_id}>
-                  <Td numeric>{row.rank}</Td>
-                  <Td strong>{row.title}</Td>
-                  <Td numeric>{row.normalized_score.toFixed(1)}</Td>
-                  <Td numeric>{row.raw_score.toFixed(1)}</Td>
-                  <Td numeric>{row.reviews}</Td>
-                  <Td>
-                    {row.low_information ? (
-                      <Badge icon="circle-alert" variant="outline">
-                        Low information
-                      </Badge>
-                    ) : row.separable ? (
-                      <Badge icon="circle-check" variant="outline">
-                        Separable
-                      </Badge>
-                    ) : (
-                      <Status icon="minus" muted>
-                        Overlapping
-                      </Status>
-                    )}
-                  </Td>
-                </Tr>
-              ))}
-            </tbody>
-          </Table>
-          <div className="actions">
-            <Button variant="secondary" icon="megaphone" onClick={() => void publish()}>
-              Publish results
-            </Button>
-            <span className="table__meta">
-              Publishing is recorded in the audit trail and notifies the teams.
-            </span>
-          </div>
+          {rows.length === 0 ? (
+            <EmptyState
+              title="Nothing has been scored yet"
+              body="No review has been submitted for this event, so there are no standings to show. The table appears as soon as one judge locks a score."
+              icon="trophy"
+            />
+          ) : (
+            <Table caption={`${rows.length} projects, from ${summary.reviews} reviews. A low-information review is flagged rather than dropped.`}>
+              <thead>
+                <tr>
+                  <Th numeric>Rank</Th>
+                  <Th>Project</Th>
+                  <Th numeric>Normalized</Th>
+                  <Th numeric>Raw</Th>
+                  <Th numeric>Reviews</Th>
+                  <Th>Notes</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <Tr key={row.project_id}>
+                    <Td numeric>{row.rank}</Td>
+                    <Td strong>{titles.get(row.project_id) ?? row.project_id}</Td>
+                    <Td numeric>
+                      <span className="stack stack-1">
+                        {row.normalized_mean.toFixed(1)}
+                        <span className="table__meta">
+                          {`${row.low.toFixed(1)}–${row.high.toFixed(1)}`}
+                        </span>
+                      </span>
+                    </Td>
+                    <Td numeric>{row.raw_mean.toFixed(1)}</Td>
+                    <Td numeric>{row.review_count}</Td>
+                    <Td>
+                      <span className="stack stack-1">
+                        {row.low_information_reviews > 0 ? (
+                          <Badge icon="circle-alert" variant="outline">
+                            Low information
+                          </Badge>
+                        ) : row.separable ? (
+                          <Badge icon="circle-check" variant="outline">
+                            Separable
+                          </Badge>
+                        ) : (
+                          <Status icon="minus" muted>
+                            Overlapping
+                          </Status>
+                        )}
+                        {/* The rank this project failed to beat, so an overlap is
+                            a statement about one pair rather than about the
+                            column. */}
+                        {row.separable || row.previous_rank === 0 ? null : (
+                          <span className="table__meta">Did not beat rank {row.previous_rank}</span>
+                        )}
+                      </span>
+                    </Td>
+                  </Tr>
+                ))}
+              </tbody>
+            </Table>
+          )}
+          {rows.length === 0 ? null : (
+            <div className="actions">
+              <Button
+                variant="secondary"
+                icon="megaphone"
+                type="button"
+                loading={publishing}
+                onClick={() => void publish()}
+              >
+                Publish results
+              </Button>
+              <span className="table__meta">
+                Publishing is recorded in the audit trail and notifies the teams.
+              </span>
+            </div>
+          )}
         </>
       ) : null}
     </div>
@@ -484,8 +593,12 @@ function ResultsApp() {
  * endpoint is what makes the export something a third party can check.
  */
 function AuditApp() {
-  const { events, eventSlug, setParams } = useEvent();
-  const [entries, setEntries] = useState<AuditEntry[] | null>(null);
+  const { events, eventSlug, setParams, eventsError } = useEvent();
+  // The listing is held with the event it belongs to, so switching event cannot
+  // leave the previous event's decisions on screen under the new event's name.
+  // Changing the action filter does not blank it, because typing in a search
+  // field should not replace the results with a skeleton on every keystroke.
+  const [listing, setListing] = useState<{ eventSlug: string; entries: AuditEntry[] } | null>(null);
   const [verification, setVerification] = useState<AuditVerification | null>(null);
   const [action, setAction] = useState("");
   const [onlyDenied, setOnlyDenied] = useState(false);
@@ -493,15 +606,16 @@ function AuditApp() {
 
   useEffect(() => {
     let live = true;
+    setError(null);
     void (async () => {
       try {
         const eventID = events.find((event) => event.slug === eventSlug)?.id;
-        const [listing, verified] = await Promise.all([
+        const [loaded, verified] = await Promise.all([
           api.audit({ ...(eventID ? { eventID } : {}), ...(action ? { action } : {}), limit: 100 }),
           api.verifyAudit(),
         ]);
         if (!live) return;
-        setEntries(listing.data);
+        setListing({ eventSlug, entries: loaded.data });
         setVerification(verified.data);
       } catch (caught) {
         if (live) setError(describe(caught));
@@ -511,6 +625,8 @@ function AuditApp() {
       live = false;
     };
   }, [events, eventSlug, action]);
+
+  const entries = listing && listing.eventSlug === eventSlug ? listing.entries : null;
 
   const shown = useMemo(
     () => (entries ?? []).filter((entry) => (onlyDenied ? !entry.allowed : true)),
@@ -560,8 +676,9 @@ function AuditApp() {
         </label>
       </div>
 
+      {eventsError ? <ErrorState title="The event list could not be loaded" body={eventsError} /> : null}
       {error ? <ErrorState title="The audit trail could not be loaded" body={error} /> : null}
-      {!entries && !error ? <Skeleton lines={5} /> : null}
+      {!entries && !error && !eventsError ? <Skeleton lines={5} /> : null}
 
       {entries ? (
         shown.length === 0 ? (
@@ -640,7 +757,7 @@ function AuditApp() {
  * next session to expire.
  */
 function GrantsApp() {
-  const { events, eventSlug, setParams } = useEvent();
+  const { events, eventSlug, setParams, eventsError } = useEvent();
   const [grants, setGrants] = useState<Grant[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
@@ -649,19 +766,37 @@ function GrantsApp() {
   const [action, setAction] = useState("results.read");
   const [allow, setAllow] = useState(true);
   const [reason, setReason] = useState("");
+  // The revoke is irreversible, so the row that is about to be revoked is held
+  // rather than acted on, and the confirmation names it.
+  const [revoking, setRevoking] = useState<Grant | null>(null);
+  const [revokeError, setRevokeError] = useState<string | null>(null);
+  const [revokeBusy, setRevokeBusy] = useState(false);
+  // A ref as well as the state: the disabled button only stops the second click
+  // once React has re-rendered, and two clicks in one batch read the same value.
+  const revokingRef = useRef(false);
 
-  async function load() {
+  async function load(live: () => boolean = () => true) {
     try {
       const eventID = events.find((event) => event.slug === eventSlug)?.id;
       const response = await api.grants(eventID ? { eventID } : {});
+      if (!live()) return;
       setGrants(response.data);
+      setError(null);
     } catch (caught) {
-      setError(describe(caught));
+      if (live()) setError(describe(caught));
     }
   }
 
   useEffect(() => {
-    void load();
+    // Without this guard a slow response for the event that was selected a
+    // moment ago lands after the newer one and replaces it with its own list.
+    let live = true;
+    setGrants(null);
+    setError(null);
+    void load(() => live);
+    return () => {
+      live = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventSlug, events]);
 
@@ -684,6 +819,25 @@ function GrantsApp() {
       setFormError(describe(caught));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function revoke() {
+    if (!revoking || revokingRef.current) return;
+    revokingRef.current = true;
+    setRevokeBusy(true);
+    setRevokeError(null);
+    try {
+      await api.revokeGrant(revoking.id);
+      setRevoking(null);
+      await load();
+    } catch (caught) {
+      // A refused revoke has to be visible: the row is still in force, and a
+      // silent failure here would read as though the permission had gone.
+      setRevokeError(describe(caught));
+    } finally {
+      revokingRef.current = false;
+      setRevokeBusy(false);
     }
   }
 
@@ -770,8 +924,14 @@ function GrantsApp() {
         </form>
       </Card>
 
+      {eventsError ? <ErrorState title="The event list could not be loaded" body={eventsError} /> : null}
       {error ? <ErrorState title="Grants could not be loaded" body={error} /> : null}
-      {!grants && !error ? <Skeleton lines={3} /> : null}
+      {revokeError ? (
+        <Alert kind="error" title="That grant was not revoked">
+          {revokeError} The grant is still in force.
+        </Alert>
+      ) : null}
+      {!grants && !error && !eventsError ? <Skeleton lines={3} /> : null}
 
       {grants ? (
         grants.length === 0 ? (
@@ -807,13 +967,17 @@ function GrantsApp() {
                     )}
                   </Td>
                   <Td meta>{grant.reason}</Td>
-                  <Td meta>{grant.expires_at ? new Date(grant.expires_at).toLocaleDateString() : "—"}</Td>
+                  <Td meta>
+                    {grant.expires_at ? new Date(grant.expires_at).toLocaleDateString() : "No expiry"}
+                  </Td>
                   <Td>
                     <Button
                       variant="ghost"
                       icon="trash-2"
+                      type="button"
                       onClick={() => {
-                        void api.revokeGrant(grant.id).then(load);
+                        setRevokeError(null);
+                        setRevoking(grant);
                       }}
                     >
                       Revoke
@@ -825,6 +989,35 @@ function GrantsApp() {
           </Table>
         )
       ) : null}
+
+      <Modal
+        open={revoking !== null}
+        title="Revoke this grant?"
+        onClose={() => {
+          if (!revokeBusy) setRevoking(null);
+        }}
+        closeLabel="Keep the grant"
+        actions={
+          <>
+            <Button variant="tertiary" type="button" disabled={revokeBusy} onClick={() => setRevoking(null)}>
+              Keep it
+            </Button>
+            <Button variant="ghost" icon="trash-2" type="button" loading={revokeBusy} onClick={() => void revoke()}>
+              Revoke
+            </Button>
+          </>
+        }
+      >
+        <p>
+          {revoking ? (
+            <>
+              <InlineCode>{revoking.action}</InlineCode> for{" "}
+              <strong>{revoking.user_id}</strong> will stop applying immediately. It cannot be
+              restored from here, and the decision is recorded in the audit trail.
+            </>
+          ) : null}
+        </p>
+      </Modal>
     </div>
   );
 }

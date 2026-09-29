@@ -13,51 +13,14 @@
   gap: var(--shell-grid-gap);
 }
 
-.project-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  height: 100%;
-  text-decoration: none;
-  color: inherit;
-}
-
-.project-card__title {
-  font: var(--text-heading-3);
-  color: var(--color-text-primary);
-}
-
-.project-card__summary {
-  font: var(--text-body-small);
-  color: var(--color-text-secondary);
-}
-
+/* A gallery card is a Card from §7.5 with a meta row under it, not a pattern of
+ * its own, so the card's own rules apply. Only the meta row is page composition. */
 .project-card__meta {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   flex-wrap: wrap;
-  margin-top: auto;
   padding-top: var(--space-3);
-}
-
-/* The score readout on a project page. A number and its context, never a
- * number alone: design.md 12 forbids a value the reader has to interpret. */
-.score-block {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-}
-
-.score-block__value {
-  font: var(--text-display-2);
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
-
-.score-block__unit {
-  font: var(--text-body-small);
-  color: var(--color-text-secondary);
 }
 
 /* A form that posts to the server. Two columns on desktop, one on mobile, with
@@ -67,10 +30,6 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-5);
-}
-
-.form-grid__full {
-  grid-column: 1 / -1;
 }
 
 @media (max-width: 767px) {
@@ -144,67 +103,11 @@
   }
 }
 
-/* The pairwise comparison view. Three columns: the pair, the verdict, and the
- * running strength. */
-.compare-pair {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 200px minmax(0, 1fr);
-  align-items: center;
-  gap: var(--space-4);
-  padding: var(--space-5) 0;
-  border-bottom: 1px solid var(--color-border);
-}
-
-.compare-pair:last-child {
-  border-bottom: 0;
-}
-
-.compare-pair__side {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.compare-pair__verdict {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-2);
-  text-align: center;
-}
-
-@media (max-width: 767px) {
-  .compare-pair {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .compare-pair__verdict {
-    flex-direction: row;
-    justify-content: center;
-  }
-}
-
-/* An audit row. The outcome is a Badge, never a coloured cell: design.md 10.3
- * forbids colour-only status, and a dense table of green and red cells is
- * exactly that. */
-.audit-row__actor {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-width: 0;
-}
-
-.audit-row__reason {
-  font: var(--text-body-small);
-  color: var(--color-text-secondary);
-  max-width: 42ch;
-}
-
 /* The sign-in page. It is the one surface outside the app shell, because a
  * signed-out viewer has no sidebar to navigate, so it establishes the brand on
- * its own instead of rendering an empty shell. */
-.auth-layout {
+ * its own instead of rendering an empty shell. The class names are the ones
+ * AuthApp.tsx renders; they were written as auth-layout* and matched nothing. */
+.auth {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 480px);
   gap: var(--space-16);
@@ -214,47 +117,70 @@
   padding: var(--space-16) 0;
 }
 
-.auth-layout__logo {
+.auth__logo {
   width: 100%;
   max-width: 320px;
   height: auto;
   margin-bottom: var(--space-8);
 }
 
-.auth-layout__title {
+.auth__title {
   font: var(--text-heading-1);
   text-wrap: balance;
 }
 
-.auth-layout__lede {
+.auth__lede {
   font: var(--text-body-large);
   color: var(--color-text-secondary);
   margin-top: var(--space-3);
   margin-bottom: var(--space-8);
 }
 
-.auth-layout__points .list__item {
+/* The points are a bare <ul> of <li>, so the rule targets the list items
+ * directly rather than a list__item class the sign-in page does not use. The
+ * List component's own rules stay for the pages that render one. */
+.auth__points > li {
   align-items: flex-start;
   padding: var(--space-2) 0;
   border-bottom: 0;
   color: var(--color-text-secondary);
   font: var(--text-body);
+  display: flex;
+  gap: var(--space-2);
 }
 
-.auth-layout__points svg {
+.auth__points svg {
   flex: 0 0 auto;
   color: var(--color-accent);
   margin-top: 3px;
 }
 
+/* The seeded-accounts disclosure. A <details> is the platform's own disclosure,
+ * so keyboard and assistive behaviour need nothing added. */
+.auth__seeded {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+  font: var(--text-body-small);
+}
+
+.auth__seeded > summary {
+  min-height: var(--control-min);
+  display: flex;
+  align-items: center;
+  font: var(--text-label);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
 @media (max-width: 1023px) {
-  .auth-layout {
+  .auth {
     grid-template-columns: minmax(0, 1fr);
     gap: var(--space-8);
     padding: var(--space-8) 0;
   }
 
-  .auth-layout__points {
+  .auth__points {
     display: none;
   }
 }

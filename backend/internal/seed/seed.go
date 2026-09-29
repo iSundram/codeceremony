@@ -49,6 +49,16 @@ type Data struct {
 	AuditSecret string
 }
 
+// Empty is a portal with no accounts, no events and nothing seeded. It exists
+// for one case: the operator has turned the demo data off and supplied no
+// fixture file, so there is genuinely nothing to load. It is a real starting
+// point rather than a fallback — the alternative was quietly seeding 125
+// accounts with a published password, which is what SEED_DEMO_DATA=false was
+// supposed to prevent.
+func Empty(passwordHash string) Data {
+	return Data{AuditSecret: ""}
+}
+
 func Default(passwordHash string) Data {
 	created := time.Date(2026, time.February, 1, 12, 0, 0, 0, time.UTC)
 	closed := time.Date(2026, time.March, 1, 18, 0, 0, 0, time.UTC)

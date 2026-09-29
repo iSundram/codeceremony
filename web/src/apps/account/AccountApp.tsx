@@ -195,7 +195,7 @@ function Teams() {
 function ProfileEditor() {
   const session = useSession();
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [headline, setHeadline] = useState("");
+  const [displayName, setDisplayName] = useState("");
   const [organization, setOrganization] = useState("");
   const [bio, setBio] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -209,7 +209,7 @@ function ProfileEditor() {
       .then((response) => {
         if (!live) return;
         setProfile(response.data.profile);
-        setHeadline(response.data.profile.headline ?? "");
+        setDisplayName(response.data.profile.display_name ?? "");
         setOrganization(response.data.profile.organization ?? "");
         setBio(response.data.profile.bio ?? "");
       })
@@ -225,13 +225,20 @@ function ProfileEditor() {
     setError(null);
     setSaved(false);
     try {
-      const response = await api.updateProfile({ headline, organization, bio });
-      // The update returns the account record, so the editor stays in step with
-      // what the server stored rather than with what was typed.
-      setProfile(response.data.profile);
-      setHeadline(response.data.profile.headline ?? "");
-      setOrganization(response.data.profile.organization ?? "");
-      setBio(response.data.profile.bio ?? "");
+      // The body is the account's own fields. It used to send `headline`, which
+      // the server's decoder does not know — DisallowUnknownFields is on — so
+      // every save came back 400 naming the offending field and the editor could
+      // never be used at all.
+      //
+      // A headline is a UserProfile field and the account endpoint does not write
+      // one, so it is not editable here. Display name is the field the user
+      // actually recognises as their name on a submission.
+      await api.updateProfile({ display_name: displayName, organization, bio });
+      const refreshed = await api.profile();
+      setProfile(refreshed.data.profile);
+      setDisplayName(refreshed.data.profile.display_name ?? "");
+      setOrganization(refreshed.data.profile.organization ?? "");
+      setBio(refreshed.data.profile.bio ?? "");
       setSaved(true);
     } catch (caught) {
       setError(describe(caught));
@@ -260,13 +267,18 @@ function ProfileEditor() {
 
       <Card>
         <form className="stack stack-5" onSubmit={onSubmit}>
-          <Field id="headline" label="Headline" hint="One line. What you work on.">
-            {({ id }) => (
+          <Field
+            id="display_name"
+            label="Display name"
+            hint="The name judges and organizers see next to your reviews and submissions."
+          >
+            {({ id, describedBy }) => (
               <input
                 id={id}
                 className="input"
-                value={headline}
-                onChange={(event) => setHeadline(event.target.value)}
+                aria-describedby={describedBy}
+                value={displayName}
+                onChange={(event) => setDisplayName(event.target.value)}
               />
             )}
           </Field>

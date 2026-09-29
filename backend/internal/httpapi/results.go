@@ -14,12 +14,8 @@ var fallbackWeights = judging.Weights{
 }
 
 func (s *Server) results(w http.ResponseWriter, r *http.Request) {
-	eventID := r.URL.Query().Get("event_id")
-	if eventID == "" {
-		eventID = "evt_01"
-	}
-	if _, err := s.store.EventByID(eventID); err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "event not found")
+	eventID, ok := s.queryEvent(w, r)
+	if !ok {
 		return
 	}
 	reviews := s.store.AllReviews(eventID)

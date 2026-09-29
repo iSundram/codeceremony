@@ -195,7 +195,7 @@ func TestRefusalsAreRecorded(t *testing.T) {
 	organizer := tokenFor(t, tokens, data, "organizer")
 
 	before := server.store.ActionAuditCount()
-	refused := request(t, server, http.MethodGet, "/v1/organizer/results", participant, nil)
+	refused := request(t, server, http.MethodGet, "/v1/organizer/results?event_id=evt_01", participant, nil)
 	if refused.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", refused.Code)
 	}
@@ -248,7 +248,7 @@ func TestAuditChainVerifiesAfterRealTraffic(t *testing.T) {
 	// Reads are not audited, by design, so the entries come from the refusals
 	// and from the one permitted mutation below.
 	request(t, server, http.MethodGet, "/v1/audit/actions", organizer, nil)
-	request(t, server, http.MethodGet, "/v1/organizer/results", participant, nil)
+	request(t, server, http.MethodGet, "/v1/organizer/results?event_id=evt_01", participant, nil)
 	request(t, server, http.MethodGet, "/v1/admin/users", participant, nil)
 	request(t, server, http.MethodGet, "/v1/audit/verify", organizer, nil)
 	request(t, server, http.MethodPost, "/v1/grants", organizer, map[string]any{
@@ -326,7 +326,7 @@ func TestExplicitDenyBeatsARoleThroughTheAPI(t *testing.T) {
 	admin := tokenFor(t, tokens, data, "admin")
 
 	// The organizer may read results by role.
-	if got := request(t, server, http.MethodGet, "/v1/organizer/results", organizer, nil); got.Code != http.StatusOK {
+	if got := request(t, server, http.MethodGet, "/v1/organizer/results?event_id=evt_01", organizer, nil); got.Code != http.StatusOK {
 		t.Fatalf("precondition: organizer could not read results: %d, body = %s", got.Code, got.Body.String())
 	}
 	// An admin denies that specific organizer that specific event.

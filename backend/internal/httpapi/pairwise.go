@@ -17,9 +17,9 @@ import (
 // Where this and the rubric pipeline disagree, that is a finding about the panel
 // rather than an error in either, and JUDGING.md explains what it means.
 func (s *Server) pairwise(w http.ResponseWriter, r *http.Request) {
-	eventID := r.URL.Query().Get("event_id")
-	if eventID == "" {
-		eventID = "evt_01"
+	eventID, ok := s.queryEvent(w, r)
+	if !ok {
+		return
 	}
 	event, err := s.store.EventByID(eventID)
 	if err != nil {

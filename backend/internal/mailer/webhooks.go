@@ -4,15 +4,24 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/iSundram/codeceremony/backend/internal/domain"
 	"github.com/iSundram/codeceremony/backend/internal/store"
 )
+
+// errRedirectRefused is reported instead of following a redirect. The signed
+// body and its signature header are re-attached to every hop, so a redirect to
+// a host the organizer does not control would hand the event data to that host
+// with a valid-looking signature.
+var errRedirectRefused = errors.New("webhook endpoint redirected; delivery refused")
 
 type HookTransport interface {
 	Do(request *http.Request) (statusCode int, body string, err error)
@@ -23,7 +32,11 @@ type HTTPHookTransport struct {
 }
 
 func NewHTTPHookTransport() *HTTPHookTransport {
-	return &HTTPHookTransport{client: &http.Client{Timeout: 10 * time.Second}}
+	return &HTTPHookTransport{client: &http.Client{Timeout: 10 * time.Second, CheckRedirect: refuseRedirect}}
+}
+
+func refuseRedirect(*http.Request, []*http.Request) error {
+	return errRedirectRefused
 }
 
 func (t *HTTPHookTransport) Do(request *http.Request) (int, string, error) {
@@ -39,6 +52,14 @@ func (t *HTTPHookTransport) Do(request *http.Request) (int, string, error) {
 	return response.StatusCode, string(body), nil
 }
 
+const (
+	defaultDeliveryTimeout  = 10 * time.Second
+	defaultDeliveryParallel = 4
+)
+
+// Webhooks fans events out to organizer endpoints. Like the mail dispatcher,
+// deliveries run with a bounded concurrency and a per-delivery deadline so one
+// hanging endpoint cannot stall the queue.
 type Webhooks struct {
 	store       *store.Store
 	transport   HookTransport
@@ -46,6 +67,8 @@ type Webhooks struct {
 	now         func() time.Time
 	maxTries    int
 	baseBackoff time.Duration
+	timeout     time.Duration
+	parallel    int
 }
 
 func NewWebhooks(data *store.Store, transport HookTransport, logger *slog.Logger, maxTries int, baseBackoff time.Duration) *Webhooks {
@@ -61,7 +84,16 @@ func NewWebhooks(data *store.Store, transport HookTransport, logger *slog.Logger
 	if baseBackoff <= 0 {
 		baseBackoff = 15 * time.Second
 	}
-	return &Webhooks{store: data, transport: transport, logger: logger, now: time.Now, maxTries: maxTries, baseBackoff: baseBackoff}
+	return &Webhooks{
+		store:       data,
+		transport:   transport,
+		logger:      logger,
+		now:         time.Now,
+		maxTries:    maxTries,
+		baseBackoff: baseBackoff,
+		timeout:     defaultDeliveryTimeout,
+		parallel:    defaultDeliveryParallel,
+	}
 }
 
 // Emit fans an event out to every active webhook subscribed to it. The
@@ -110,32 +142,75 @@ func (w *Webhooks) Backoff(attempts int) time.Duration {
 	return delay
 }
 
+// DeliverOnce claims due deliveries and posts them. Sends overlap under a
+// bounded concurrency; the retry accounting per delivery is unchanged.
 func (w *Webhooks) DeliverOnce(limit int) (int, error) {
 	now := w.now().UTC()
 	claimed := w.store.ClaimDeliveries(now, limit)
-	delivered := 0
-	for _, delivery := range claimed {
-		updated, err := w.deliver(delivery)
-		delivery = updated
-		if err != nil {
-			giveUp := delivery.Attempts >= w.maxTries
-			delivery.Status = domain.DeliveryFailed
-			delivery.LastError = err.Error()
-			if !giveUp {
-				delivery.Status = domain.DeliveryPending
-				delivery.NextAttempt = now.Add(w.Backoff(delivery.Attempts))
-			}
-			if markErr := w.store.MarkDelivery(delivery.ID, delivery); markErr != nil {
-				return delivered, markErr
-			}
-			continue
-		}
-		delivered++
+	results := make([]bool, len(claimed))
+	failures := make([]error, len(claimed))
+	slots := make(chan struct{}, w.parallel)
+	wait := &sync.WaitGroup{}
+	for index, delivery := range claimed {
+		wait.Add(1)
+		go func(index int, delivery domain.WebhookDelivery) {
+			defer wait.Done()
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			results[index], failures[index] = w.deliverOne(now, delivery)
+		}(index, delivery)
 	}
-	return delivered, nil
+	wait.Wait()
+	delivered := 0
+	var firstErr error
+	for index := range claimed {
+		if results[index] {
+			delivered++
+		}
+		if failures[index] != nil && firstErr == nil {
+			firstErr = failures[index]
+		}
+	}
+	return delivered, firstErr
 }
 
-func (w *Webhooks) deliver(delivery domain.WebhookDelivery) (domain.WebhookDelivery, error) {
+func (w *Webhooks) deliverOne(now time.Time, delivery domain.WebhookDelivery) (bool, error) {
+	updated, err := w.deliverWithin(context.Background(), delivery)
+	delivery = updated
+	if err != nil {
+		giveUp := delivery.Attempts >= w.maxTries
+		delivery.Status = domain.DeliveryFailed
+		delivery.LastError = err.Error()
+		if !giveUp {
+			delivery.Status = domain.DeliveryPending
+			delivery.NextAttempt = now.Add(w.Backoff(delivery.Attempts))
+		}
+		if markErr := w.store.MarkDelivery(delivery.ID, delivery); markErr != nil {
+			return false, markErr
+		}
+		return false, nil
+	}
+	return true, nil
+}
+
+// deliverWithin posts one delivery under its own deadline and turns a panic in
+// the transport into an ordinary failure, so neither a bad endpoint nor a buggy
+// call site can stop the delivery loop.
+func (w *Webhooks) deliverWithin(ctx context.Context, delivery domain.WebhookDelivery) (updated domain.WebhookDelivery, err error) {
+	if w.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, w.timeout)
+		defer cancel()
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			updated, err = delivery, fmt.Errorf("webhook delivery panicked: %v", recovered)
+		}
+	}()
+	return w.deliver(ctx, delivery)
+}
+
+func (w *Webhooks) deliver(ctx context.Context, delivery domain.WebhookDelivery) (domain.WebhookDelivery, error) {
 	webhook, err := w.store.WebhookByID(delivery.WebhookID)
 	if err != nil {
 		return delivery, fmt.Errorf("webhook no longer exists")
@@ -144,7 +219,15 @@ func (w *Webhooks) deliver(delivery domain.WebhookDelivery) (domain.WebhookDeliv
 		delivery.Status = domain.DeliveryDelivered
 		return delivery, w.store.MarkDelivery(delivery.ID, delivery)
 	}
-	request, err := http.NewRequest(http.MethodPost, webhook.URL, bytes.NewReader([]byte(delivery.Payload)))
+	// The secret is not persisted, so a webhook restored from a snapshot comes
+	// back without one. Signing with an empty key would publish a payload that
+	// no signature can prove, so the delivery fails loudly and keeps failing
+	// visibly until the endpoint is re-registered.
+	if strings.TrimSpace(webhook.Secret) == "" {
+		w.logger.Error("webhook has no signing secret; refusing to deliver", "webhook_id", webhook.ID, "delivery_id", delivery.ID)
+		return delivery, fmt.Errorf("webhook %s has no signing secret", webhook.ID)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, webhook.URL, bytes.NewReader([]byte(delivery.Payload)))
 	if err != nil {
 		return delivery, fmt.Errorf("webhook request could not be built: %w", err)
 	}
@@ -187,10 +270,21 @@ func (w *Webhooks) Run(ctx context.Context, interval time.Duration, batch int) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if _, err := w.DeliverOnce(batch); err != nil {
-				w.logger.Error("webhook dispatch cycle failed", "error", err)
-			}
+			w.cycle(batch)
 		}
+	}
+}
+
+// cycle runs one delivery pass and recovers, because the entry point starts
+// this loop bare: an unrecovered panic would end webhooks for the process.
+func (w *Webhooks) cycle(batch int) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			w.logger.Error("webhook dispatch cycle panicked", "panic", recovered)
+		}
+	}()
+	if _, err := w.DeliverOnce(batch); err != nil {
+		w.logger.Error("webhook dispatch cycle failed", "error", err)
 	}
 }
 

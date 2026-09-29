@@ -876,17 +876,23 @@ func (s *Server) registerWeb(mux *routeMux) {
 	page := func(handler http.HandlerFunc) http.Handler { return s.optionalAuth(handler) }
 
 	mux.Handle("GET /static/app.css", http.HandlerFunc(s.webStatic))
-	mux.Handle("GET /{$}", page(s.webHome))
-	mux.Handle("GET /login", page(s.webLogin))
-	mux.Handle("POST /login", s.guard(ratelimitLogin, http.HandlerFunc(s.webLoginPost)))
-	mux.Handle("POST /logout", s.guard(ratelimitAccount, http.HandlerFunc(s.webLogoutPost)))
-	mux.Handle("GET /judge/{slug}", page(s.webJudge))
-	mux.Handle("POST /judge/{slug}/projects/{id}", s.guard(ratelimitWrite, s.optionalAuth(s.webSaveReview)))
-	mux.Handle("GET /organizer/{slug}", page(s.webOrganizer))
-	mux.Handle("GET /organizer/{slug}/results", page(s.webResults))
-	mux.Handle("POST /organizer/{slug}/publish", s.guard(ratelimitWrite, s.optionalAuth(s.webPublish)))
-	mux.Handle("GET /events/{slug}", page(s.webGallery))
-	mux.Handle("GET /projects/{id}", page(s.webProject))
-	mux.Handle("POST /projects/{id}/comment", s.guard(ratelimitComment, s.optionalAuth(s.webPostComment)))
-	mux.Handle("GET /account", page(s.webAccount))
+	// The eight server-rendered pages and their five form POST routes are
+	// retired. They were not a fallback, they were a second, ungated copy of
+	// every write in the product: each form handler re-derived its own
+	// permission check by hand instead of calling the action gate, so an
+	// explicit deny, a suspended account, and a per-event fence were all
+	// silently absent on exactly those routes, and a judge could save a review
+	// through a form when the API refused them.
+	//
+	// They also shadowed the app. GET /organizer/{slug} matched the SPA's
+	// /organizer/panel, /organizer/results, /organizer/audit, /organizer/grants
+	// and /organizer/submissions, and GET /judge/{slug} matched /judge/compare,
+	// /judge/rubric and /judge/{projectID} — so those navigation items and every
+	// "Review" button 404'd on a load, and the only thing that made them appear
+	// to work was a client-side push that never re-fetched.
+	//
+	// The JSON API and the embedded app are the whole product now. A checkout
+	// with no frontend build serves the API and nothing else, which is the
+	// honest state: it is a build artifact, not a degraded mode.
+	_ = page
 }

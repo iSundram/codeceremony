@@ -90,8 +90,17 @@ func New(cfg config.Config, data *store.Store, tokens auth.TokenIssuer, logger *
 		logger = slog.Default()
 	}
 	registry := mailer.NewRegistry()
+	// The retry policy and the send bounds are the operator's settings, not
+	// constants. They used to be hard-coded inside the dispatcher, which meant
+	// MAIL_MAX_ATTEMPTS and MAIL_INTERVAL_SECONDS configured the webhook
+	// transport and nothing else — a message would die on its fourth attempt
+	// no matter what the environment said.
 	dispatcher := mailer.NewDispatcher(data, registry, mailer.NewSender(cfg, logger), mailer.DispatcherOptions{
 		FromAddress: cfg.SMTPFrom,
+		MaxAttempts: cfg.MailMaxAttempts,
+		BaseBackoff: time.Duration(cfg.MailInterval) * time.Second,
+		Parallelism: cfg.MailParallelism,
+		SenderName:  cfg.SMTPFromName,
 		Logger:      logger,
 	})
 	mailService := mailer.NewService(data, dispatcher, registry, mailer.Options{
@@ -245,6 +254,16 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /v1/events/{slug}/submissions", s.requireAction(authz.ActionSubmissionCreate, s.createSubmission))
 	mux.Handle("GET /v1/judge/scores", s.requireAction(authz.ActionReviewReadOwn, s.judgeScores))
 	mux.Handle("PUT /v1/judge/projects/{projectID}/review", s.requireAction(authz.ActionReviewWriteOwn, s.saveReview))
+	// The judge's own review for a project. It was never registered, so the
+	// client's GET fell through to the app's client-route fallback and came back
+	// 200 text/html; response.json() then threw a bare SyntaxError that no catch
+	// treated as an ApiError, and the scoring page had no error state to show —
+	// so a judge reopening an assignment saw a permanent skeleton.
+	//
+	// The read is scoped to the caller in the handler rather than by a separate
+	// action, because "my own review of this project" is the same permission as
+	// writing it: nobody may read another judge's draft.
+	mux.Handle("GET /v1/judge/projects/{projectID}/review", s.requireAction(authz.ActionReviewWriteOwn, s.myReview))
 	mux.Handle("DELETE /v1/organizer/comparisons/{comparisonID}", s.requireAction(authz.ActionResultsRead, s.deleteComparison))
 	mux.Handle("GET /v1/submissions/{projectID}", s.requireAction(authz.ActionSubmissionRead, s.submissionDetail))
 	mux.Handle("PATCH /v1/submissions/{projectID}", s.requireAction(authz.ActionSubmissionUpdateOwn, s.editSubmission))
@@ -333,9 +352,71 @@ func (s *Server) optionalAuth(next http.HandlerFunc) http.Handler {
 	})
 }
 
+// sanitizeRequestID bounds a caller-supplied correlation id to something safe to
+// store, log and echo. Anything longer, non-printable, or starting with a
+// character a spreadsheet treats as the start of a formula is discarded, and the
+// caller is given a generated id instead.
+func sanitizeRequestID(raw string) string {
+	const max = 64
+	value := strings.TrimSpace(raw)
+	if value == "" || len(value) > max {
+		return ""
+	}
+	for _, r := range value {
+		if r < 0x20 || r == 0x7f {
+			return ""
+		}
+	}
+	switch value[0] {
+	case '=', '+', '-', '@':
+		return ""
+	}
+	return value
+}
+
+// corsMethods lists the methods the API actually serves, for the preflight
+// response.
+func corsMethods() []string {
+	return []string{
+		http.MethodGet, http.MethodHead, http.MethodPost,
+		http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions,
+	}
+}
+
+// commitTracker records whether a response has left the server.
+type commitTracker struct {
+	http.ResponseWriter
+	committed bool
+}
+
+func (w *commitTracker) WriteHeader(status int) {
+	if !w.committed {
+		w.committed = true
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *commitTracker) Write(b []byte) (int, error) {
+	w.committed = true
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *commitTracker) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
 func (s *Server) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
+		// Bounded before it is used for anything, including the response header
+		// and the audit entry. It is caller-supplied and it used to be taken
+		// verbatim: a 700 KB X-Request-ID was echoed as a 700 KB response header,
+		// which conforming clients reject as LineTooLong, and the same value was
+		// persisted into the retained audit chain by an unauthenticated
+		// request — a memory-exhaustion primitive available before signing in,
+		// and a spreadsheet formula waiting to be exported to CSV.
+		requestID := sanitizeRequestID(r.Header.Get("X-Request-ID"))
 		if requestID == "" {
 			requestID = domain.NewID("req")
 		}
@@ -345,16 +426,36 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-ID")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
+			// Derived from the routes rather than listed, because the list was
+			// missing PATCH and DELETE while the API has both — so a browser
+			// against a split ALLOWED_ORIGIN frontend failed preflight on
+			// PATCH /v1/account/profile and on every delete.
+			w.Header().Set("Access-Control-Allow-Methods", strings.Join(corsMethods(), ", "))
 		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+		// Tracks whether a response has been committed, so the recover below can
+		// tell "nothing was sent" from "a status and part of a body are already
+		// on the wire". Without it a panic after the first byte produced a
+		// response that was a valid JSON prefix followed by an error object.
+		tracker := &commitTracker{ResponseWriter: w}
+		w = tracker
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				s.logger.Error("request panic", "request_id", requestID, "panic", recovered)
-				writeError(w, http.StatusInternalServerError, "internal_error", "an unexpected error occurred")
+				// Only write a 500 if nothing has been committed. A handler that
+				// wrote a status and part of a body and then panicked would
+				// otherwise produce a 200 whose body is a valid JSON prefix
+				// followed by an error object — a response that parses as valid
+				// JSON and means nothing, which is worse than a truncated one
+				// because a client cannot tell. Once the header is out the status
+				// cannot be taken back, so the honest action is to log and let
+				// the connection close.
+				if !tracker.committed {
+					writeError(w, http.StatusInternalServerError, "internal_error", "an unexpected error occurred")
+				}
 			}
 		}()
 		next.ServeHTTP(w, r)
@@ -581,6 +682,65 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, action authz.
 		return principal, false
 	}
 	return principal, true
+}
+
+// authorizeRecordEvent is the second fence, and it exists because the first one
+// is answerable by the caller.
+//
+// A route addressed by an id — /organizer/assignments/{id}, /comments/{id}/
+// moderate — has no event in its path, so routeTarget falls back to the
+// ?event_id= query parameter. That parameter is caller-supplied, and nothing
+// tied it to the record the handler was about to load. Appending
+// ?event_id=<an event you staff> to a request about a record in an event you do
+// not staff passed the gate and then wrote to the other event, which is the
+// cross-event access the whole action gate exists to prevent, reachable with a
+// query string.
+//
+// So every handler that loads a record and acts on it re-resolves the decision
+// against the event the record actually belongs to. It is a second call
+// deliberately: the route gate authorises the request's claim, this one
+// authorises the write. Returning false has already written the refusal, so
+// callers only need to return.
+func (s *Server) authorizeRecordEvent(w http.ResponseWriter, r *http.Request, action authz.Action, recordEventID string) bool {
+	if recordEventID == "" {
+		// A record with no event is not something a per-event action can be
+		// evaluated against, and guessing here is what produced the bug this
+		// function closes.
+		writeError(w, http.StatusUnprocessableEntity, "event_mismatch",
+			"this record is not attached to an event")
+		return false
+	}
+	_, ok := s.authorize(w, r, action, authz.Target{EventID: recordEventID, Resource: "event"})
+	return ok
+}
+
+// myReview returns the caller's own review of a project, or null when they have
+// not started one. The ETag goes out with it so the next save can assert against
+// the version that was read.
+func (s *Server) myReview(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.PrincipalFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "authentication is required")
+		return
+	}
+	projectID := r.PathValue("projectID")
+	project, err := s.store.SubmissionByID(projectID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "submission not found")
+		return
+	}
+	if !s.authorizeRecordEvent(w, r, authz.ActionReviewWriteOwn, project.EventID) {
+		return
+	}
+	review, err := s.store.ReviewForJudgeProject(principal.UserID, projectID)
+	if err != nil {
+		// No review yet is the ordinary state for an unstarted assignment, and it
+		// is null rather than a 404: the route exists, the answer is empty.
+		writeJSON(w, http.StatusOK, map[string]any{"data": nil})
+		return
+	}
+	setETag(w, reviewVersion(review))
+	writeJSON(w, http.StatusOK, map[string]any{"data": review})
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
@@ -816,9 +976,9 @@ func (s *Server) judgeScores(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "forbidden", "judges cannot read another judge's scores")
 		return
 	}
-	eventID := r.URL.Query().Get("event_id")
-	if eventID == "" {
-		eventID = "evt_01"
+	eventID, ok := s.queryEvent(w, r)
+	if !ok {
+		return
 	}
 	reviews := s.store.ReviewsForJudge(eventID, principal.UserID)
 	// One ETag for the whole set rather than one per review, because the client's
@@ -954,12 +1114,8 @@ func (s *Server) saveReview(w http.ResponseWriter, r *http.Request) {
 // from progress because progress is a single aggregate while this is a list, and
 // because the aggregate is safe to cache and this is not.
 func (s *Server) organizerPanel(w http.ResponseWriter, r *http.Request) {
-	eventID := r.URL.Query().Get("event_id")
-	if eventID == "" {
-		eventID = "evt_01"
-	}
-	if _, err := s.store.EventByID(eventID); err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "event not found")
+	eventID, ok := s.queryEvent(w, r)
+	if !ok {
 		return
 	}
 	roster := s.store.JudgeRoster(eventID)
@@ -1026,34 +1182,66 @@ func (s *Server) organizerPanel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
-	eventID := r.URL.Query().Get("event_id")
-	if eventID == "" {
-		eventID = "evt_01"
-	}
-	if _, err := s.store.EventByID(eventID); err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "event not found")
+	eventID, ok := s.queryEvent(w, r)
+	if !ok {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": s.store.Progress(eventID)})
 }
 
 func (s *Server) organizerReviews(w http.ResponseWriter, r *http.Request) {
-	eventID := r.URL.Query().Get("event_id")
-	if eventID == "" {
-		eventID = "evt_01"
-	}
-	if _, err := s.store.EventByID(eventID); err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "event not found")
+	eventID, ok := s.queryEvent(w, r)
+	if !ok {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": s.store.AllReviews(eventID)})
 }
 
+// queryEvent resolves which event a request is about, from ?event_id= or
+// ?event_slug=.
+//
+// Accepting the slug is not a convenience for the caller, it is what stops the
+// two halves of the product disagreeing about what an event is called. The
+// organizer and judge surfaces address events by slug everywhere else — the
+// route, the URL, the comparison endpoints — and the query parameters took a
+// bare id. The client resolved it by sending a slug into a parameter the server
+// read as an id, which either 404'd or, worse, silently answered about the
+// default event: an organizer picked an event and was shown another one's panel.
+//
+// The parameter is still required. A missing one is a 400, not a default,
+// because a default here means the gate and the handler disagree about which
+// event is being acted on.
+func (s *Server) queryEvent(w http.ResponseWriter, r *http.Request) (string, bool) {
+	if raw := strings.TrimSpace(r.URL.Query().Get("event_id")); raw != "" {
+		if _, err := s.store.EventByID(raw); err != nil {
+			writeError(w, http.StatusNotFound, "not_found", "event not found")
+			return "", false
+		}
+		return raw, true
+	}
+	if slug := strings.TrimSpace(r.URL.Query().Get("event_slug")); slug != "" {
+		event, err := s.store.EventBySlug(slug)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "not_found", "event not found")
+			return "", false
+		}
+		return event.ID, true
+	}
+	writeError(w, http.StatusBadRequest, "invalid_request", "event_id or event_slug is required")
+	return "", false
+}
+
 func pagination(r *http.Request) (int, int) {
 	page := 1
 	pageSize := 24
+	// Capped, because the offset is (page-1)*pageSize and an uncapped page
+	// overflows it: page=100000000000000000 produced a negative start, and the
+	// bounds check only tested the upper bound, so the slice below it panicked
+	// with "slice bounds out of range [:-100]". A page number that large is not
+	// a real request.
+	const maxPage = 1_000_000
 	if value := r.URL.Query().Get("page"); value != "" {
-		if parsed, err := parsePositiveInt(value); err == nil {
+		if parsed, err := parsePositiveInt(value); err == nil && parsed <= maxPage {
 			page = parsed
 		}
 	}

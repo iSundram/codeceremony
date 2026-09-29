@@ -26,7 +26,7 @@ const IdempotencyHeader = "Idempotency-Key"
 // most requests do not have.
 func (s *Server) idempotent(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		key := r.Header.Get(IdempotencyHeader)
+		key := sanitizeIdempotencyKey(r.Header.Get(IdempotencyHeader))
 		if !isIdempotencyEligible(r.Method, key) {
 			next(w, r)
 			return
@@ -43,7 +43,12 @@ func (s *Server) idempotent(next http.HandlerFunc) http.HandlerFunc {
 		r.Body = io.NopCloser(bytes.NewReader(body))
 
 		principal, _ := auth.PrincipalFromContext(r.Context())
-		fingerprint := store.FingerprintRequest(r.Method, r.URL.Path, body)
+		// If-Match is part of the request's identity. It was left out, and a 412
+		// is below 500 so it was memoised as the outcome: a client that did what
+		// the 412 told it to do — re-read, take the ETag the 412 carried, retry —
+		// got the same 412 back with Idempotency-Replayed on it, forever. The
+		// only escape was a different key.
+		fingerprint := store.FingerprintRequest(r.Method, r.URL.Path, body, r.Header.Get("If-Match"))
 
 		outcome, record, done := s.store.BeginIdempotent(principal.UserID, key, fingerprint)
 		switch outcome {
@@ -83,7 +88,12 @@ func (s *Server) idempotent(next http.HandlerFunc) http.HandlerFunc {
 				w.Header().Set("Content-Type", contentType)
 				if record.Status == 0 {
 					// The first attempt failed before producing a response. Say so
-					// rather than returning an empty 200.
+					// rather than returning an empty 200 — and release the claim,
+					// or the key is dead: expiry deliberately skips entries that
+					// are still in flight, so an entry that is completed-never
+					// and abandoned-never blocks that key for the lifetime of
+					// the process.
+					s.store.AbandonIdempotent(principal.UserID, key)
 					writeError(w, http.StatusServiceUnavailable, "idempotent_request_failed",
 						"the earlier request with this key did not complete")
 					return
@@ -100,8 +110,27 @@ func (s *Server) idempotent(next http.HandlerFunc) http.HandlerFunc {
 
 		// This attempt owns the key. Capture the response so a retry can be
 		// answered from it.
-		recorder := &recordingWriter{ResponseWriter: w, status: http.StatusOK}
+		// The status starts at 0, not 200, and that is the fix for a bug that
+		// handed a client a lie. A panicking handler unwinds through this defer
+		// before the middleware's recover runs, so with a seeded 200 the claim
+		// was completed as a successful empty response: the client got a 500,
+		// and its retry was answered 200 with an empty body and
+		// Idempotency-Replayed. Zero means "nothing was written", which is the
+		// only honest value before the handler runs.
+		recorder := &recordingWriter{ResponseWriter: w}
 		defer func() {
+			if recorder.status == 0 {
+				// Nothing reached the client, so there is no outcome to remember.
+				s.store.AbandonIdempotent(principal.UserID, key)
+				return
+			}
+			if recorder.status == http.StatusPreconditionFailed {
+				// Deliberately not memoised. A 412 is the server asking the
+				// client to change its request, and the changed request must not
+				// be answered with the refusal to the previous one.
+				s.store.AbandonIdempotent(principal.UserID, key)
+				return
+			}
 			if recorder.err != nil || recorder.status >= 500 {
 				// A failed attempt is not remembered, so a corrected retry is not
 				// blocked by a claim that will never complete.
@@ -115,6 +144,26 @@ func (s *Server) idempotent(next http.HandlerFunc) http.HandlerFunc {
 		writeIdempotencyHeaders(w, key, false)
 		next(recorder, r)
 	}
+}
+
+// sanitizeIdempotencyKey accepts a conservative shape or nothing. The key is
+// echoed back in a response header and stored in the record, so a 4000-character
+// or control-character value was both a response-header hazard and a row in the
+// store that no client would ever look up again.
+func sanitizeIdempotencyKey(raw string) string {
+	const max = 255
+	if raw == "" || len(raw) > max {
+		return ""
+	}
+	for _, r := range raw {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '-', r == '_', r == '.':
+		default:
+			return ""
+		}
+	}
+	return raw
 }
 
 // isIdempotencyEligible reports whether a request is worth tracking.
@@ -171,6 +220,12 @@ type recordingWriter struct {
 	err      error
 	wroteHdr bool
 }
+
+// committed reports whether a response has already left. The middleware's
+// recover needs it: once a status and part of a body are on the wire, a 500
+// cannot be substituted, and appending one produces a body that is a valid
+// prefix followed by an error object.
+func (w *recordingWriter) committed() bool { return w.wroteHdr }
 
 func (w *recordingWriter) WriteHeader(status int) {
 	if w.wroteHdr {

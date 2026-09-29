@@ -231,7 +231,7 @@ func TestJudgeCannotDeclareConflictForAnotherJudge(t *testing.T) {
 
 func TestParticipantCannotListAssignments(t *testing.T) {
 	server, tokens, data := newTestServer(t)
-	response := request(t, server, http.MethodGet, "/v1/organizer/assignments", tokenFor(t, tokens, data, "participant"), nil)
+	response := request(t, server, http.MethodGet, "/v1/organizer/assignments?event_id=evt_01", tokenFor(t, tokens, data, "participant"), nil)
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403, body = %s", response.Code, response.Body.String())
 	}

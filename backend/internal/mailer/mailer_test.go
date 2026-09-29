@@ -1,7 +1,9 @@
 package mailer
 
 import (
+	"context"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 )
 
 type recordingSender struct {
+	mu      sync.Mutex
 	sent    []Message
 	failFor string
 	err     error
@@ -19,12 +22,24 @@ type recordingSender struct {
 
 func (s *recordingSender) Name() string { return "recording" }
 
-func (s *recordingSender) Send(message Message) error {
+func (s *recordingSender) Send(ctx context.Context, message Message) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if s.failFor != "" && message.To == s.failFor {
 		return s.err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.sent = append(s.sent, message)
 	return nil
+}
+
+// count is read by tests that run the dispatch loop in the background.
+func (s *recordingSender) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.sent)
 }
 
 func newTestService(t *testing.T, sender Sender) (*store.Store, *Service, *Dispatcher) {
@@ -344,12 +359,6 @@ func TestBuildRFC822ProducesMultipart(t *testing.T) {
 	plain := buildRFC822(Message{From: "no-reply@example.org", To: "user@example.org", Subject: "Hi", Text: "only text"})
 	if plain == "" {
 		t.Fatalf("expected a rendered plain message")
-	}
-}
-
-func TestEscapeHelper(t *testing.T) {
-	if Escape("<b>") != "&lt;b&gt;" {
-		t.Fatalf("expected html escaping")
 	}
 }
 

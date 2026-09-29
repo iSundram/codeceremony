@@ -127,7 +127,10 @@ type PairwiseResult struct {
 	MethodVersion string           `json:"method_version"`
 	Entries       []PairwiseEntry  `json:"entries"`
 	Judges        []JudgeBreakdown `json:"judges"`
-	// TotalComparisons is the number of head-to-head verdicts the fit consumed.
+	// TotalComparisons is the number of head-to-head verdicts the fit
+	// consumed. It counts verdicts, not distinct matchups: two judges who
+	// compared the same pair contribute two verdicts, which is one matchup
+	// carrying weight two.
 	TotalComparisons int `json:"total_comparisons"`
 	// Iterations is how many MM updates ran before convergence or the bound.
 	Iterations int `json:"iterations"`
@@ -265,7 +268,23 @@ func tallyFromComparisons(comparisons []domain.Comparison, tieWeight float64) (t
 			judgeRecord.ties++
 		}
 		record.byJudge[comparison.JudgeID] = judgeRecord
-		record.order = append(record.order, newPairKey(left, right))
+		// Meetings counts how many judges compared this pair, and it is the
+		// weight the fitter puts on that matchup. It was never incremented here,
+		// so every opponent weight on the recorded-comparison path was zero, the
+		// MLE update was skipped entirely, and the fit returned the seed
+		// strengths with iterations: 1 and converged: true — an inverted
+		// ranking, published as a confident result. deriveTally, which builds
+		// the same structure from rubric scores, has always done both of these
+		// things; the recorded path is now held to the same standard.
+		key := newPairKey(left, right)
+		record.verdicts++
+		if record.meetings[key] == 0 {
+			// order is the list of distinct matchups, not of verdicts. Appending
+			// per verdict would put the same pair in `against` once per judge,
+			// and the fitter would count that matchup several times over.
+			record.order = append(record.order, key)
+		}
+		record.meetings[key]++
 	}
 	for id := range record.reviewed {
 		if record.played[id] == 0 {
@@ -306,7 +325,7 @@ func fitFromTally(record tally, config PairwiseConfig) PairwiseResult {
 	result := PairwiseResult{
 		Method:           PairwiseMethod,
 		MethodVersion:    DefaultMethodVersion,
-		TotalComparisons: len(record.order),
+		TotalComparisons: record.verdicts,
 	}
 	// Every project that took part needs a strength, including one that only
 	// ever lost, or it would be invisible in the output. Projects nobody
@@ -435,6 +454,10 @@ type tally struct {
 	ties   map[string]int
 	// meetings counts, for each unordered pair, how many judges compared them.
 	meetings map[pairKey]int
+	// verdicts counts every verdict consumed, including repeats of a pair a
+	// second judge also answered. It is separate from len(order), which is the
+	// number of distinct matchups the fitter weights.
+	verdicts int
 	// played is the total number of comparisons each project took part in.
 	played map[string]int
 	// reviewed is every project that appears in any review, including one that
@@ -529,6 +552,7 @@ func deriveTally(reviews []domain.Review, weights Weights, tieWeight float64) ta
 			result.byJudge[judgeID] = record
 		}
 	}
+	result.verdicts = len(result.order)
 	sort.Slice(result.order, func(i, j int) bool {
 		if result.order[i].left != result.order[j].left {
 			return result.order[i].left < result.order[j].left
@@ -666,10 +690,20 @@ const MinStrength = 1e-6
 // beaten anyone, and treating it as unbeaten would flag a panel that is in fact
 // entirely undecided.
 func decisiveExtremes(record tally) (neverLost, neverWon string) {
+	// Map iteration is randomized, so "the first candidate" would make the
+	// published note reshuffle between two identical requests: four different
+	// strings over two hundred identical runs. The choice of which project to
+	// name is arbitrary, but a value that changes when nothing changed is a
+	// defect a reader cannot diagnose, so the candidates are sorted and the
+	// first is taken.
+	candidates := make([]string, 0, len(record.played))
 	for id, played := range record.played {
-		if played == 0 {
-			continue
+		if played > 0 {
+			candidates = append(candidates, id)
 		}
+	}
+	sort.Strings(candidates)
+	for _, id := range candidates {
 		wins := record.wins[id] - float64(record.ties[id])*defaultTieWeight
 		if record.losses[id] == 0 && wins > 0 && neverLost == "" {
 			neverLost = id

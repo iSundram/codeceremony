@@ -11,12 +11,8 @@ import (
 )
 
 func (s *Server) exportCSV(w http.ResponseWriter, r *http.Request) {
-	eventID := r.URL.Query().Get("event_id")
-	if eventID == "" {
-		eventID = "evt_01"
-	}
-	if _, err := s.store.EventByID(eventID); err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "event not found")
+	eventID, ok := s.queryEvent(w, r)
+	if !ok {
 		return
 	}
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")

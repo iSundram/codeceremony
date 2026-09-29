@@ -3,7 +3,7 @@ import { useParams, useSearchParams } from "react-router-dom";
 
 import { Badge, EmptyState, ErrorState, Skeleton, Status } from "../../components/feedback";
 import { Button, LinkButton, SearchField } from "../../components/controls";
-import { PageHead, Tabs, TabLink } from "../../components/shell";
+import { Pagination, PageHead, Tabs, TabLink } from "../../components/shell";
 import {
   Card,
   CardActions,
@@ -17,8 +17,14 @@ import {
   Th,
   Tr,
 } from "../../components/data";
-import { api, ApiError, type EventDetail, type Project } from "../../lib/api";
+import { api, ApiError, type Project } from "../../lib/api";
 import { useSession } from "../../lib/session";
+
+/** The server's page size. meta.page_size reports it, but the cap is the contract. */
+const PAGE_SIZE = 24;
+
+/** How long the search field rests before it becomes a query. */
+const SEARCH_DEBOUNCE_MS = 300;
 
 /**
  * The public app: the event directory, an event, and its gallery.
@@ -31,21 +37,38 @@ import { useSession } from "../../lib/session";
  */
 export function PublicApp() {
   const params = useParams();
-  const slug = params["slug"];
   const [search] = useSearchParams();
-  const view = search.get("view");
 
-  if (view === "gallery" || (slug === "gallery" && !search.get("event"))) return <GalleryApp />;
+  // The route is declared `/events/*`, which yields the splat under "*" and
+  // nothing else, so params.slug was always undefined and every event link fell
+  // through to the directory. The first segment names the event and the rest is
+  // the sub-route.
+  const segments = (params["*"] ?? "").split("/").filter(Boolean);
+  const isGalleryRoute = segments[0] === "gallery";
+  const slug = isGalleryRoute ? "" : (segments[0] ?? "");
+  const view = search.get("view") ?? (isGalleryRoute ? "gallery" : segments[1] ?? "");
+
+  if (view === "gallery") return <GalleryApp eventSlug={slug} />;
   if (slug) return <EventApp slug={slug} />;
   return <EventDirectory />;
+}
+
+function RetryButton({ onRetry }: { onRetry: () => void }) {
+  return (
+    <Button variant="secondary" icon="refresh-cw" onClick={onRetry}>
+      Try again
+    </Button>
+  );
 }
 
 function EventDirectory() {
   const [events, setEvents] = useState<Awaited<ReturnType<typeof api.events>>["data"] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
     let live = true;
+    setError(null);
     api
       .events()
       .then((response) => live && setEvents(response.data))
@@ -53,9 +76,17 @@ function EventDirectory() {
     return () => {
       live = false;
     };
-  }, []);
+  }, [reload]);
 
-  if (error) return <ErrorState title="Events could not be loaded" body={error} />;
+  if (error) {
+    return (
+      <ErrorState
+        title="Events could not be loaded"
+        body={error}
+        retry={<RetryButton onRetry={() => setReload((value) => value + 1)} />}
+      />
+    );
+  }
   if (!events) return <Skeleton lines={4} />;
 
   return (
@@ -105,22 +136,39 @@ function EventDirectory() {
 }
 
 function EventApp({ slug }: { slug: string }) {
-  const [event, setEvent] = useState<EventDetail | null>(null);
+  const [loaded, setLoaded] = useState<Awaited<ReturnType<typeof api.event>> | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
     let live = true;
+    setError(null);
     api
       .event(slug)
-      .then((response) => live && setEvent(response.data))
+      .then((response) => live && setLoaded(response))
       .catch((caught) => live && setError(describe(caught)));
     return () => {
       live = false;
     };
-  }, [slug]);
+  }, [slug, reload]);
 
-  if (error) return <ErrorState title="That event could not be loaded" body={error} />;
-  if (!event) return <Skeleton lines={5} />;
+  if (error) {
+    return (
+      <ErrorState
+        title="That event could not be loaded"
+        body={error}
+        retry={<RetryButton onRetry={() => setReload((value) => value + 1)} />}
+      />
+    );
+  }
+  if (!loaded) return <Skeleton lines={5} />;
+
+  // The related collections are siblings of `data`, not fields inside it. Reading
+  // event.tracks found nothing, and the count below threw on the first line.
+  const event = loaded.data;
+  const tracks = loaded.tracks;
+  const prizes = loaded.prizes;
+  const milestones = loaded.milestones;
 
   return (
     <div className="stack stack-8">
@@ -128,7 +176,7 @@ function EventApp({ slug }: { slug: string }) {
         title={event.name}
         {...(event.summary ? { lede: event.summary } : {})}
         actions={
-          <LinkButton to={`/events/${slug}?view=gallery`} variant="primary" icon="folder-kanban">
+          <LinkButton to={`/events/${slug}/gallery`} variant="primary" icon="folder-kanban">
             Project gallery
           </LinkButton>
         }
@@ -136,7 +184,7 @@ function EventApp({ slug }: { slug: string }) {
 
       <Tabs>
         <TabLink to={`/events/${slug}`} label="Overview" active icon="file-text" />
-        <TabLink to={`/events/${slug}?view=gallery`} label="Gallery" active={false} icon="folder-kanban" />
+        <TabLink to={`/events/${slug}/gallery`} label="Gallery" active={false} icon="folder-kanban" />
         <TabLink to={`/events/${slug}?view=results`} label="Results" active={false} icon="trophy" />
       </Tabs>
 
@@ -163,19 +211,21 @@ function EventApp({ slug }: { slug: string }) {
                 {new Date(event.submissions_close).toLocaleDateString()}
               </DescriptionValue>
               <DescriptionTerm>Tracks</DescriptionTerm>
-              <DescriptionValue>{event.tracks.length}</DescriptionValue>
+              <DescriptionValue>{tracks.length}</DescriptionValue>
               <DescriptionTerm>Prizes</DescriptionTerm>
-              <DescriptionValue>{event.prizes.length}</DescriptionValue>
+              <DescriptionValue>{prizes.length}</DescriptionValue>
+              <DescriptionTerm>Judges</DescriptionTerm>
+              <DescriptionValue>{loaded.judge_count}</DescriptionValue>
             </DescriptionList>
           </Card>
         </div>
       </div>
 
-      {event.tracks.length > 0 ? (
+      {tracks.length > 0 ? (
         <section className="stack stack-4">
           <h3 className="card__title">Tracks</h3>
           <div className="cluster">
-            {event.tracks.map((track) => (
+            {tracks.map((track) => (
               <Badge key={track.id} icon="route">
                 {track.name}
               </Badge>
@@ -184,7 +234,7 @@ function EventApp({ slug }: { slug: string }) {
         </section>
       ) : null}
 
-      {event.milestones.length > 0 ? (
+      {milestones.length > 0 ? (
         <section className="stack stack-4">
           <h3 className="card__title">Schedule</h3>
           <Table caption="The milestones that define the event's shape.">
@@ -196,13 +246,37 @@ function EventApp({ slug }: { slug: string }) {
               </tr>
             </thead>
             <tbody>
-              {event.milestones.map((milestone) => (
+              {milestones.map((milestone) => (
                 <Tr key={milestone.id}>
                   <Td strong>{milestone.title}</Td>
                   <Td meta>{milestone.detail ?? "—"}</Td>
                   <Td numeric>
                     {milestone.due_at ? new Date(milestone.due_at).toLocaleDateString() : "—"}
                   </Td>
+                </Tr>
+              ))}
+            </tbody>
+          </Table>
+        </section>
+      ) : null}
+
+      {prizes.length > 0 ? (
+        <section className="stack stack-4">
+          <h3 className="card__title">Prizes</h3>
+          <Table caption="What the panel is awarding.">
+            <thead>
+              <tr>
+                <Th>Prize</Th>
+                <Th>Description</Th>
+                <Th numeric>Rank</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {prizes.map((prize) => (
+                <Tr key={prize.id}>
+                  <Td strong>{prize.name}</Td>
+                  <Td meta>{prize.description || "—"}</Td>
+                  <Td numeric>{ordinal(prize.rank)}</Td>
                 </Tr>
               ))}
             </tbody>
@@ -218,57 +292,112 @@ function EventApp({ slug }: { slug: string }) {
  *
  * Search and track filter are server-side queries, not a client-side filter over
  * an already-fetched page: a gallery of forty projects that silently shows only
- * the first twenty matches is worse than one that says there are more.
+ * the first twenty matches is worse than one that says there are more. That is
+ * also why the page control exists at all — the server caps a page at 24, so
+ * without it every project past the first page is unreachable.
  */
-function GalleryApp() {
+function GalleryApp({ eventSlug }: { eventSlug: string }) {
   const session = useSession();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [query, setQuery] = useState(searchParams.get("q") ?? "");
   const [events, setEvents] = useState<Awaited<ReturnType<typeof api.events>>["data"]>([]);
   const [projects, setProjects] = useState<Project[] | null>(null);
+  const [meta, setMeta] = useState<{ page: number; page_size: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [eventsError, setEventsError] = useState<string | null>(null);
+  const [eventsPending, setEventsPending] = useState(true);
+  const [reload, setReload] = useState(0);
 
-  const eventSlug = searchParams.get("event") ?? events[0]?.slug ?? "";
+  const query = searchParams.get("q") ?? "";
+  // The route's own event beats the portal's first event, so a gallery reached
+  // from an event page shows that event rather than whichever sorts first. `||`
+  // rather than `??`, because /events/gallery names no event and an empty string
+  // is a value here, not an absent one.
+  const eventSlugParam = searchParams.get("event") || eventSlug || events[0]?.slug || "";
   const track = searchParams.get("track") ?? "";
-  const page = Number(searchParams.get("page") ?? "1");
+  const page = Math.max(1, Number(searchParams.get("page") ?? "1") || 1);
+
+  // Typed but not yet applied. A request and a history entry per keystroke makes
+  // the server chase the typist and fills the back button with half-typed queries.
+  const [typed, setTyped] = useState(query);
 
   useEffect(() => {
     let live = true;
+    setEventsError(null);
+    setEventsPending(true);
     api
       .events()
-      .then((response) => live && setEvents(response.data))
-      .catch(() => undefined);
+      .then((response) => {
+        if (!live) return;
+        setEvents(response.data);
+        setEventsPending(false);
+      })
+      .catch((caught) => {
+        if (!live) return;
+        setEventsError(describe(caught));
+        setEventsPending(false);
+      });
     return () => {
       live = false;
     };
-  }, []);
+  }, [reload]);
 
   useEffect(() => {
-    if (!eventSlug) return;
+    if (typed === query) return;
+    const timer = setTimeout(() => {
+      setSearchParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          if (typed) next.set("q", typed);
+          else next.delete("q");
+          next.delete("page");
+          return next;
+        },
+        { replace: true },
+      );
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [typed, query, setSearchParams]);
+
+  useEffect(() => {
+    if (!eventSlugParam) return;
     let live = true;
     setProjects(null);
+    setMeta(null);
     setError(null);
     api
-      .projects(eventSlug, {
-        ...(searchParams.get("q") ? { q: searchParams.get("q") as string } : {}),
+      .projects(eventSlugParam, {
+        ...(query ? { q: query } : {}),
         ...(track ? { track } : {}),
         page,
       })
-      .then((response) => live && setProjects(response.data))
+      .then((response) => {
+        if (!live) return;
+        setProjects(response.data);
+        setMeta(response.meta);
+      })
       .catch((caught) => live && setError(describe(caught)));
     return () => {
       live = false;
     };
-  }, [eventSlug, track, page, searchParams]);
+  }, [eventSlugParam, track, query, page, reload]);
 
   function apply(next: Record<string, string | number | undefined>) {
-    const merged = new URLSearchParams(searchParams);
-    for (const [key, value] of Object.entries(next)) {
-      if (value === undefined || value === "") merged.delete(key);
-      else merged.set(key, String(value));
-    }
-    setSearchParams(merged, { replace: true });
+    setSearchParams(
+      (current) => {
+        const merged = new URLSearchParams(current);
+        for (const [key, value] of Object.entries(next)) {
+          if (value === undefined || value === "") merged.delete(key);
+          else merged.set(key, String(value));
+        }
+        return merged;
+      },
+      { replace: true },
+    );
   }
+
+  const pageSize = meta?.page_size ?? PAGE_SIZE;
+  const total = meta?.total ?? projects?.length ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
 
   return (
     <div className="stack stack-6">
@@ -281,19 +410,20 @@ function GalleryApp() {
         <SearchField
           id="gallery-search"
           label="Search projects"
-          value={query}
-          onChange={(value) => {
-            setQuery(value);
-            apply({ q: value || undefined, page: 1 });
-          }}
+          value={typed}
+          onChange={setTyped}
+          placeholder="Title, summary or tag"
         />
         <label className="field">
           <span className="field__label">Event</span>
           <select
             className="select"
-            value={eventSlug}
-            onChange={(event) => apply({ event: event.target.value, page: 1 })}
+            value={eventSlugParam}
+            onChange={(event) => apply({ event: event.target.value, page: undefined })}
           >
+            {events.length === 0 ? (
+              <option value={eventSlugParam}>{eventSlugParam || "No events"}</option>
+            ) : null}
             {events.map((event) => (
               <option key={event.id} value={event.slug}>
                 {event.name}
@@ -303,8 +433,29 @@ function GalleryApp() {
         </label>
       </div>
 
-      {error ? <ErrorState title="The gallery could not be loaded" body={error} /> : null}
-      {!projects && !error ? <Skeleton lines={4} /> : null}
+      {eventsError ? (
+        <ErrorState
+          title="The event list could not be loaded"
+          body={eventsError}
+          retry={<RetryButton onRetry={() => setReload((value) => value + 1)} />}
+        />
+      ) : null}
+      {error ? (
+        <ErrorState
+          title="The gallery could not be loaded"
+          body={error}
+          retry={<RetryButton onRetry={() => setReload((value) => value + 1)} />}
+        />
+      ) : null}
+      {!projects && !error && !eventsError ? <Skeleton lines={4} /> : null}
+
+      {!eventSlugParam && !eventsError && !eventsPending && !projects ? (
+        <EmptyState
+          title="There are no events to browse"
+          body="A gallery belongs to an event, and this portal has none yet. Once one is created its projects appear here."
+          icon="calendar"
+        />
+      ) : null}
 
       {projects && projects.length === 0 ? (
         <EmptyState
@@ -316,7 +467,7 @@ function GalleryApp() {
               variant="secondary"
               icon="x"
               onClick={() => {
-                setQuery("");
+                setTyped("");
                 setSearchParams(new URLSearchParams(), { replace: true });
               }}
             >
@@ -327,11 +478,24 @@ function GalleryApp() {
       ) : null}
 
       {projects && projects.length > 0 ? (
-        <div className="gallery-grid">
-          {projects.map((project) => (
-            <ProjectCard key={project.id} project={project} signedIn={Boolean(session.user)} />
-          ))}
-        </div>
+        <>
+          <p className="table__meta">
+            {total === 1 ? "1 project" : `${total} projects`}
+            {total > pageSize
+              ? ` · showing ${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, total)}`
+              : null}
+          </p>
+          <div className="gallery-grid">
+            {projects.map((project) => (
+              <ProjectCard key={project.id} project={project} signedIn={Boolean(session.user)} />
+            ))}
+          </div>
+          <Pagination
+            page={page}
+            pageCount={pageCount}
+            onPage={(next) => apply({ page: next > 1 ? next : undefined })}
+          />
+        </>
       ) : null}
     </div>
   );

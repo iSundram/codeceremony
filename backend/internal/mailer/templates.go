@@ -3,7 +3,7 @@ package mailer
 import (
 	"bytes"
 	"fmt"
-	"html"
+	htmltemplate "html/template"
 	"strings"
 	"text/template"
 	"time"
@@ -59,11 +59,11 @@ func (r *Registry) Render(name string, values Context) (Rendered, error) {
 	if !ok {
 		return Rendered{}, fmt.Errorf("unknown mail template %q", name)
 	}
-	subject, err := renderString(tmpl.Subject, values)
+	subject, err := renderText(tmpl.Subject, values)
 	if err != nil {
 		return Rendered{}, err
 	}
-	textBody, err := renderString(tmpl.Text, values)
+	textBody, err := renderText(tmpl.Text, values)
 	if err != nil {
 		return Rendered{}, err
 	}
@@ -78,7 +78,11 @@ func (r *Registry) Render(name string, values Context) (Rendered, error) {
 	for key, value := range values {
 		htmlValues[key] = value
 	}
-	htmlBody, err = renderString(htmlBody, htmlValues)
+	// The HTML part is rendered with html/template, not text/template. Every
+	// value in this map is attacker-controlled (display names, team and project
+	// names, invite messages), so the HTML engine is what keeps a value like
+	// `<img src=x onerror=...>` from becoming markup in the recipient's client.
+	htmlBody, err = renderHTML(htmlBody, htmlValues)
 	if err != nil {
 		return Rendered{}, err
 	}
@@ -97,8 +101,20 @@ func paragraphs(body string) []string {
 	return result
 }
 
-func renderString(source string, values Context) (string, error) {
+func renderText(source string, values Context) (string, error) {
 	parsed, err := template.New("mail").Option("missingkey=error").Parse(source)
+	if err != nil {
+		return "", err
+	}
+	buffer := &bytes.Buffer{}
+	if err := parsed.Execute(buffer, values); err != nil {
+		return "", err
+	}
+	return buffer.String(), nil
+}
+
+func renderHTML(source string, values map[string]any) (string, error) {
+	parsed, err := htmltemplate.New("mail").Option("missingkey=error").Parse(source)
 	if err != nil {
 		return "", err
 	}
@@ -241,8 +257,4 @@ func NormalizeAnnouncement(request AnnouncementRequest, now time.Time) (string, 
 	default:
 		return headline, body, sendTo
 	}
-}
-
-func Escape(value string) string {
-	return html.EscapeString(value)
 }

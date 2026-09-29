@@ -1,12 +1,14 @@
 /* CodeCeremony application shell.
  *
  * §5.2 fixes the shell dimensions and §6 fixes the sidebar's behaviour. The
- * mobile drawer is not a second navigation design: it is the same sidebar
- * markup inside a <dialog>, which is what §6.2 requires.
+ * mobile drawer is not a second navigation design: it is the same navigation
+ * item components in a different container, which is what §6.2 requires.
  *
- * Layout is CSS-only. The sidebar collapse, the drawer, and the theme of a page
- * are all driven by markup and one inline script for focus management, because
- * the portal must render with scripting unavailable.
+ * The drawer and the modal are React-managed rather than <dialog> elements,
+ * because both need a backdrop that closes on click and a focus trap they
+ * control, and a ::backdrop pseudo-element is neither. Focus management is
+ * JavaScript in the component; nothing in this file depends on it, so the
+ * layout is correct with scripting unavailable and only the overlay is not.
  */
 
 .shell {
@@ -71,23 +73,14 @@
   min-width: 0;
 }
 
-.sidebar-brand__logo {
-  height: 28px;
-  width: auto;
-  flex: 0 0 auto;
-}
-
-.sidebar-brand__icon {
+/* §10.2: the wordmark is artwork and the mark is artwork. There is deliberately
+ * no text substitute and no second class here — the collapsed slot and the
+ * expanded slot differ in which file they load, not in how the image is styled,
+ * so they share one box. */
+.sidebar-brand__mark {
   height: 28px;
   width: 28px;
   flex: 0 0 auto;
-}
-
-.sidebar-brand__name {
-  font: var(--text-heading-3);
-  font-weight: 700;
-  color: var(--color-text-primary);
-  white-space: nowrap;
 }
 
 /* ---- §7.2 SidebarNavGroup and SidebarNavItem ---- */
@@ -144,37 +137,59 @@
   background: var(--accent-periwinkle-16);
 }
 
-/* §8.4: the active state is communicated with fill, weight and an accessible
- * state, not colour alone. The ribbon is the fill, the weight is 600, and
- * aria-current is set on the element. */
+/* §8.4 and §3.4: the active state is carried by the fill, the weight and
+ * aria-current rather than colour alone, which is what §6.1 asks for. The fill
+ * is color.accent-soft rather than gradient.ribbon, and the reason is measured
+ * rather than stylistic: §6.1 permits either, but the ribbon recipe ends at
+ * accent-blue, and ink on #749DD0 is 4.41:1, which fails AA for the 16px label
+ * and is only approved for large bold text. Ink on accent-periwinkle is
+ * 5.25:1, on §3.4's approved list, so the accent-soft fill is the one of §6.1's
+ * two options that survives the contrast rule at nav-label size. */
+.nav-item--active,
 .nav-item[aria-current="page"] {
-  background: var(--gradient-ribbon);
+  background: var(--color-accent-soft);
   color: var(--color-text-primary);
   font-weight: 600;
   box-shadow: var(--shadow-0);
 }
 
+.nav-item--active .nav-item__icon,
 .nav-item[aria-current="page"] .nav-item__icon {
   color: var(--color-text-primary);
 }
 
-/* ---- §6.1 Collapsed mode. Icons with accessible labels on focus and hover. */
+/* ---- §6.1 Collapsed mode. Icons with accessible labels on focus and hover.
+ * The collapsed state is a class on the shell, not a data attribute: the shell
+ * is a React component, so a class is the state it can actually set. ---- */
 
-.shell[data-nav="collapsed"] {
+.shell--collapsed {
   grid-template-columns: var(--shell-sidebar-collapsed) minmax(0, 1fr);
 }
 
-.shell[data-nav="collapsed"] .sidebar-brand {
-  padding: 0;
+.shell--collapsed .sidebar-brand {
   justify-content: center;
+  padding: 0;
 }
 
-.shell[data-nav="collapsed"] .sidebar-brand__name,
-.shell[data-nav="collapsed"] .nav-item__label,
-.shell[data-nav="collapsed"] .nav-group__label,
-.shell[data-nav="collapsed"] .sidebar__footer .avatar-name {
-  /* §6.1: labels must remain readable in collapsed mode through accessible
-   * naming, so the text is removed visually and kept for assistive tech. */
+.shell--collapsed .nav-item {
+  justify-content: center;
+  padding: 0;
+}
+
+.shell--collapsed .nav-group + .nav-group {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+/* §6.1: labels must remain reachable in collapsed mode, so the text is removed
+ * visually and kept in the accessibility tree. A collapsed item still has to be
+ * announced with its name, which is what makes the icon-only rail usable. The
+ * clip is the same technique as .visually-hidden, repeated here so the rule
+ * does not depend on a foundation class being added to shell markup. */
+.shell--collapsed .nav-item__label,
+.shell--collapsed .nav-group__label,
+.shell--collapsed .sidebar__identity-name {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -182,17 +197,6 @@
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
-}
-
-.shell[data-nav="collapsed"] .nav-item {
-  justify-content: center;
-  padding: 0;
-}
-
-.shell[data-nav="collapsed"] .nav-group + .nav-group {
-  margin-top: var(--space-4);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--color-border);
 }
 
 /* ---- §6.3 Top bar. 72px desktop, 56px mobile. Approved slots only:
@@ -214,7 +218,7 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
 }
 
 .topbar__title {
@@ -242,7 +246,23 @@
   flex: 1 1 auto;
 }
 
-/* The nav trigger is hidden on desktop, where the sidebar is persistent. */
+/* The utility-action slot of §6.3. It is a row rather than a bare block so the
+ * caller's actions keep the 8px label-to-icon rhythm of §8.1 and wrap instead of
+ * overflowing when the signed-in identity is long. */
+.topbar__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+/* The nav trigger is hidden on desktop, where the sidebar is persistent. §6.3
+ * forbids a second navigation system in the top bar, so a hamburger sitting
+ * beside an always-visible sidebar is not a control that is merely redundant —
+ * it is a second way to navigate, and it is hidden rather than disabled so it
+ * cannot be reached by keyboard either. */
 .topbar__nav-trigger {
   display: none;
 }
@@ -258,8 +278,19 @@
   min-width: 0;
 }
 
-.breadcrumbs__sep {
-  color: var(--color-text-disabled);
+/* A breadcrumb link stays a link. §12 forbids hiding essential information
+ * behind hover, so the underline is the resting state rather than something the
+ * hover reveals. */
+.breadcrumbs__link {
+  color: var(--color-text-secondary);
+  text-decoration: underline;
+  text-decoration-color: var(--color-border);
+  white-space: nowrap;
+}
+
+.breadcrumbs__link:hover {
+  color: var(--color-text-primary);
+  text-decoration-color: var(--color-accent);
 }
 
 .breadcrumbs__current {
@@ -298,6 +329,16 @@
   flex-direction: column;
   gap: var(--space-2);
   min-width: 0;
+}
+
+/* The action slot of a page heading. It is a wrapping row so a page with three
+ * actions at tablet width stacks them instead of pushing the title off-screen,
+ * which §5.4 would not allow. */
+.page-head__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
 }
 
 .page-head__title {
@@ -360,13 +401,14 @@
 
 /* ---- §5.3 Breakpoints. These are layout constraints, not new variants. ---- */
 
-/* tablet: 768px and up. */
+/* tablet: 768px and up. The sidebar is allowed to be compact here, so the
+ * labels are clipped to the accessibility tree and the items become icon rails.
+ * §6.1: the name is still announced, it is only not painted. */
 @media (max-width: 1023px) {
   .shell {
     grid-template-columns: var(--shell-sidebar-collapsed) minmax(0, 1fr);
   }
 
-  .shell .sidebar-brand__name,
   .shell .nav-item__label,
   .shell .nav-group__label {
     position: absolute;
@@ -437,8 +479,10 @@
   }
 
   .page-head__title {
-    font-size: 24px;
-    line-height: 32px;
+    /* heading.2 is 24/32, which is exactly the pair the raw 24px/32px literals
+     * here were spelling out. The token is the same size; what changes is that
+     * the next revision of the type scale reaches this rule too. */
+    font: var(--text-heading-2);
   }
 
   .toast-region {
@@ -473,56 +517,14 @@
   }
 }
 
-/* ---- §6.2 The mobile drawer reuses the sidebar markup. The <dialog> element
- * gives focus trapping, Escape-to-close and inertness from the platform, which
- * is why no JavaScript is needed to make it accessible. ---- */
-
-.nav-drawer {
-  width: min(var(--shell-drawer), calc(100vw - var(--space-8)));
-  max-width: var(--shell-drawer);
-  height: 100vh;
-  max-height: 100vh;
-  margin: 0 0 0 auto;
-  padding: 0;
-  border: 0;
-  border-right: 1px solid var(--color-border);
-  background: var(--color-surface);
-  color: var(--color-text-primary);
-  box-shadow: var(--shadow-2);
-}
-
-.nav-drawer::backdrop {
-  background: var(--color-overlay);
-}
-
-.nav-drawer__inner {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
-
-.nav-drawer__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  height: var(--shell-topbar-mobile);
-  padding: 0 var(--space-4);
-  border-bottom: 1px solid var(--color-border);
-}
-
-.nav-drawer__body {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  padding: var(--space-4) var(--space-3);
-}
-
 /* A skip link is the first focusable thing on the page. It is visually hidden
  * until it receives focus, then sits above the shell. Without it a keyboard user
  * has to tab through the entire sidebar on every page, which design.md 13 rules
  * out by implication: reading order and keyboard order must be identical, and a
- * long repeated navigation in the tab order is not a usable one. */
+ * long repeated navigation in the tab order is not a usable one.
+ *
+ * Navy rather than gradient.ink, for the same reason the primary button is: the
+ * recipe's accent-blue end puts this label at 2.20:1 against mist. */
 .skip-link {
   position: absolute;
   left: var(--space-4);
@@ -530,7 +532,7 @@
   z-index: 100;
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-control);
-  background: var(--gradient-ink);
+  background: var(--color-border-strong);
   color: var(--color-text-on-dark);
   font: var(--text-label);
   text-decoration: none;
@@ -550,7 +552,8 @@
 }
 
 /* Sidebar identity block. design.md 6.1 reserves the footer for utility
- * content; this is the only thing in it. */
+ * content; this is the only thing in it. It is the signed-in identity, which
+ * App.tsx has to render into .sidebar__footer for any of it to appear. */
 .sidebar__identity {
   min-width: 0;
 }
@@ -569,52 +572,6 @@
   text-transform: capitalize;
 }
 
-.topbar__signout {
-  margin: 0;
-}
-
-/* The no-JavaScript mobile navigation. A <details> disclosure, because a
- * portal that must work offline must also work with scripting off. */
-.noscript-nav {
-  position: fixed;
-  inset: auto var(--space-4) var(--space-4) auto;
-  z-index: 50;
-  max-width: calc(100vw - var(--space-8));
-  padding: var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-control);
-  background: var(--color-surface);
-  box-shadow: var(--shadow-2);
-}
-
-.noscript-nav > summary {
-  min-height: var(--control-min);
-  display: flex;
-  align-items: center;
-  padding: 0 var(--space-4);
-  border-radius: var(--radius-control);
-  font: var(--text-label);
-  cursor: pointer;
-  list-style: none;
-}
-
-.nav-form {
-  display: contents;
-}
-
-/* ---- React shell additions ---------------------------------------------
-   The sidebar and drawer markup are the same components, so the collapsed and
-   drawer states share these rules rather than duplicating them. */
-
-.sidebar {
-  grid-area: side;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  background: var(--color-surface);
-  border-right: 1px solid var(--color-border);
-}
-
 .nav-list {
   list-style: none;
   margin: 0;
@@ -624,76 +581,6 @@
 .sidebar__collapse {
   width: 100%;
   justify-content: flex-start;
-}
-
-.sidebar__footer {
-  flex: 0 0 auto;
-  padding: var(--space-4);
-  border-top: 1px solid var(--color-border);
-}
-
-/* design.md 6.1: the active item uses the ribbon, and is never hidden or
-   signalled by colour alone — the weight and aria-current carry it too. */
-.nav-item--active {
-  background: var(--gradient-ribbon);
-  color: var(--color-text-primary);
-  font-weight: 600;
-  box-shadow: var(--shadow-0);
-}
-
-/* design.md 6.1: collapsed mode keeps the labels reachable. They are removed
-   visually and kept in the accessibility tree, because a collapsed item must
-   still be announced with its name. */
-.shell--collapsed .sidebar-brand__lockup,
-.shell--collapsed .nav-item__label,
-.shell--collapsed .nav-group__label {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
-.shell--collapsed .nav-item {
-  justify-content: center;
-  padding: 0;
-}
-
-.shell--collapsed {
-  grid-template-columns: var(--shell-sidebar-collapsed) minmax(0, 1fr);
-}
-
-.shell--collapsed .sidebar-brand {
-  justify-content: center;
-  padding: 0;
-}
-
-/* The skip link is the first focusable thing on the page. design.md 13 requires
-   reading order and keyboard order to match, and a long repeated navigation in
-   the tab order is not a usable one. */
-.skip-link {
-  position: absolute;
-  top: var(--space-4);
-  left: var(--space-4);
-  z-index: 100;
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-control);
-  background: var(--color-text-secondary);
-  color: var(--color-text-on-dark);
-  font: var(--text-label);
-  text-decoration: none;
-  transform: translateY(-200%);
-  transition: transform var(--motion-fast) var(--ease-out);
-}
-
-.skip-link:focus {
-  transform: translateY(0);
-}
-
-.main:focus {
-  outline: none;
 }
 
 .topbar__account {
@@ -778,43 +665,4 @@
   min-height: 0;
   overflow-y: auto;
   padding: var(--space-4) var(--space-3);
-}
-
-/* The modal layer. An overlay is a positioning concern rather than a colour
-   token, so the value lives here and not in the component. */
-.modal-layer {
-  position: fixed;
-  inset: 0;
-  z-index: 90;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-4);
-  background: var(--color-overlay);
-}
-
-.modal-layer .drawer {
-  margin: 0;
-  height: auto;
-  max-height: 100vh;
-  border-radius: var(--radius-panel);
-  border: 1px solid var(--color-border);
-}
-
-.alert__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-  margin-top: var(--space-3);
-}
-
-.cluster-nowrap {
-  flex-wrap: nowrap;
-}
-
-@media (min-width: 1440px) {
-  .main {
-    padding-left: var(--space-16);
-    padding-right: var(--space-16);
-  }
 }

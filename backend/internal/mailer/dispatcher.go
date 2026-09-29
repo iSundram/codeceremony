@@ -5,26 +5,42 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"sync"
 	"time"
 
 	"github.com/iSundram/codeceremony/backend/internal/domain"
 	"github.com/iSundram/codeceremony/backend/internal/store"
 )
 
+// A send that hangs would otherwise hold the whole batch: the SMTP dial alone
+// waits 15 seconds, and the run loop is the only mail worker in the process.
+const (
+	defaultSendTimeout   = 20 * time.Second
+	defaultBatchParallel = 4
+)
+
 type Dispatcher struct {
-	store     *store.Store
-	registry  *Registry
-	sender    Sender
-	logger    *slog.Logger
-	now       func() time.Time
-	maxTries  int
-	baseDelay time.Duration
-	from      string
+	store      *store.Store
+	registry   *Registry
+	sender     Sender
+	logger     *slog.Logger
+	now        func() time.Time
+	maxTries   int
+	baseDelay  time.Duration
+	from       string
+	sendWindow time.Duration
+	parallel   int
 }
 
 type DispatcherOptions struct {
 	MaxAttempts int
 	BaseBackoff time.Duration
+	// SendTimeout bounds a single delivery, including its SMTP dial. Zero means
+	// defaultSendTimeout.
+	SendTimeout time.Duration
+	// Parallelism is the number of sends DispatchOnce runs at once. Zero means
+	// defaultBatchParallel.
+	Parallelism int
 	SenderName  string
 	FromAddress string
 	Clock       func() time.Time
@@ -38,6 +54,12 @@ func NewDispatcher(data *store.Store, registry *Registry, sender Sender, options
 	if options.BaseBackoff <= 0 {
 		options.BaseBackoff = 30 * time.Second
 	}
+	if options.SendTimeout <= 0 {
+		options.SendTimeout = defaultSendTimeout
+	}
+	if options.Parallelism <= 0 {
+		options.Parallelism = defaultBatchParallel
+	}
 	if options.Clock == nil {
 		options.Clock = time.Now
 	}
@@ -45,14 +67,16 @@ func NewDispatcher(data *store.Store, registry *Registry, sender Sender, options
 		options.Logger = slog.Default()
 	}
 	return &Dispatcher{
-		store:     data,
-		registry:  registry,
-		sender:    sender,
-		logger:    options.Logger,
-		now:       options.Clock,
-		maxTries:  options.MaxAttempts,
-		baseDelay: options.BaseBackoff,
-		from:      options.FromAddress,
+		store:      data,
+		registry:   registry,
+		sender:     sender,
+		logger:     options.Logger,
+		now:        options.Clock,
+		maxTries:   options.MaxAttempts,
+		baseDelay:  options.BaseBackoff,
+		from:       options.FromAddress,
+		sendWindow: options.SendTimeout,
+		parallel:   options.Parallelism,
 	}
 }
 
@@ -109,36 +133,81 @@ func (d *Dispatcher) Queue(message domain.MailMessage, values Context) (domain.M
 	return d.store.QueueMail(message)
 }
 
-// DispatchOnce claims a batch of due messages and attempts delivery.
+// DispatchOnce claims a batch of due messages and attempts delivery. The sends
+// run with a small bounded concurrency under per-send deadlines, so an
+// unreachable relay delays only its own messages instead of the whole batch.
 func (d *Dispatcher) DispatchOnce(limit int) (int, error) {
 	now := d.now().UTC()
 	claimed := d.store.ClaimMail(now, limit)
-	delivered := 0
-	for _, message := range claimed {
-		if err := d.deliver(message); err != nil {
-			giveUp := message.Attempts >= d.maxTries
-			retryAt := now.Add(d.Backoff(message.Attempts))
-			if markErr := d.store.MarkMailFailed(message.ID, err.Error(), retryAt, giveUp); markErr != nil {
-				return delivered, markErr
-			}
-			if giveUp {
-				d.logger.Error("mail gave up after retries", "mail_id", message.ID, "to", message.Email, "error", err)
-			} else {
-				d.logger.Warn("mail delivery failed", "mail_id", message.ID, "to", message.Email, "attempt", message.Attempts, "retry_at", retryAt, "error", err)
-			}
-			continue
-		}
-		delivered++
+	// The store call is the only shared mutation from a worker, so its result
+	// is the only thing that needs collecting after the wait.
+	results := make([]bool, len(claimed))
+	failures := make([]error, len(claimed))
+	slots := make(chan struct{}, d.parallel)
+	wait := &sync.WaitGroup{}
+	for index, message := range claimed {
+		wait.Add(1)
+		go func(index int, message domain.MailMessage) {
+			defer wait.Done()
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			results[index], failures[index] = d.dispatchOne(now, message)
+		}(index, message)
 	}
-	return delivered, nil
+	wait.Wait()
+	delivered := 0
+	var firstErr error
+	for index := range claimed {
+		if results[index] {
+			delivered++
+		}
+		if failures[index] != nil && firstErr == nil {
+			firstErr = failures[index]
+		}
+	}
+	return delivered, firstErr
 }
 
-func (d *Dispatcher) deliver(message domain.MailMessage) error {
+// dispatchOne sends a single claimed message and applies the retry accounting
+// for it. The accounting is deliberately identical to the sequential form:
+// attempts were already incremented by the claim, and the next attempt is
+// scheduled from that same count.
+func (d *Dispatcher) dispatchOne(now time.Time, message domain.MailMessage) (bool, error) {
+	if err := d.deliver(context.Background(), message); err != nil {
+		giveUp := message.Attempts >= d.maxTries
+		retryAt := now.Add(d.Backoff(message.Attempts))
+		if markErr := d.store.MarkMailFailed(message.ID, err.Error(), retryAt, giveUp); markErr != nil {
+			return false, markErr
+		}
+		if giveUp {
+			d.logger.Error("mail gave up after retries", "mail_id", message.ID, "to", message.Email, "error", err)
+		} else {
+			d.logger.Warn("mail delivery failed", "mail_id", message.ID, "to", message.Email, "attempt", message.Attempts, "retry_at", retryAt, "error", err)
+		}
+		return false, nil
+	}
+	return true, nil
+}
+
+// deliver sends one message under its own deadline. A panic inside a send is
+// converted into an ordinary delivery failure so the retry accounting still
+// applies and the worker survives.
+func (d *Dispatcher) deliver(ctx context.Context, message domain.MailMessage) (err error) {
 	from := d.from
 	if from == "" {
 		from = "no-reply@codeceremony.local"
 	}
-	if err := d.sender.Send(Message{
+	if d.sendWindow > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, d.sendWindow)
+		defer cancel()
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("mail delivery panicked: %v", recovered)
+		}
+	}()
+	if err := d.sender.Send(ctx, Message{
 		From:    from,
 		To:      message.Email,
 		Subject: message.Subject,
@@ -165,10 +234,22 @@ func (d *Dispatcher) Run(ctx context.Context, interval time.Duration, batch int)
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if _, err := d.DispatchOnce(batch); err != nil {
-				d.logger.Error("mail dispatch cycle failed", "error", err)
-			}
+			d.cycle(batch)
 		}
+	}
+}
+
+// cycle runs one dispatch pass. It recovers because this loop is started bare
+// from the process entry point: an unrecovered panic would end the goroutine and
+// silently stop all mail for the life of the process.
+func (d *Dispatcher) cycle(batch int) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			d.logger.Error("mail dispatch cycle panicked", "panic", recovered)
+		}
+	}()
+	if _, err := d.DispatchOnce(batch); err != nil {
+		d.logger.Error("mail dispatch cycle failed", "error", err)
 	}
 }
 

@@ -169,7 +169,8 @@ func (s *Server) reportComment(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listReports(w http.ResponseWriter, r *http.Request) {
 	eventID := strings.TrimSpace(r.URL.Query().Get("event_id"))
 	if eventID == "" {
-		eventID = "evt_01"
+		writeError(w, http.StatusBadRequest, "invalid_request", "event_id or event_slug is required")
+		return
 	}
 	reports := s.store.Reports(eventID, domain.ReportStatus(strings.TrimSpace(r.URL.Query().Get("status"))))
 	writeJSON(w, http.StatusOK, map[string]any{"data": reports, "count": len(reports), "event_id": eventID})

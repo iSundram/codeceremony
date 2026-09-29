@@ -26,12 +26,12 @@ func TestJudgeCannotReadPeerScoresThroughAnyRoute(t *testing.T) {
 		path   string
 		token  string
 	}{
-		{"explicit judge param", http.MethodGet, "/v1/judge/scores?judge=judge_a", judgeB},
-		{"explicit judge param on assignments", http.MethodGet, "/v1/organizer/assignments?judge_id=judge_a", judgeB},
-		{"peer reviews", http.MethodGet, "/v1/organizer/reviews", judgeB},
-		{"results", http.MethodGet, "/v1/organizer/results", judgeB},
-		{"csv export", http.MethodGet, "/v1/organizer/export.csv", judgeB},
-		{"json export", http.MethodGet, "/v1/organizer/export", judgeB},
+		{"explicit judge param", http.MethodGet, "/v1/judge/scores?judge=judge_a&event_id=evt_01", judgeB},
+		{"explicit judge param on assignments", http.MethodGet, "/v1/organizer/assignments?judge_id=judge_a&event_id=evt_01", judgeB},
+		{"peer reviews", http.MethodGet, "/v1/organizer/reviews?event_id=evt_01", judgeB},
+		{"results", http.MethodGet, "/v1/organizer/results?event_id=evt_01", judgeB},
+		{"csv export", http.MethodGet, "/v1/organizer/export.csv?event_id=evt_01", judgeB},
+		{"json export", http.MethodGet, "/v1/organizer/export?event_id=evt_01", judgeB},
 	}
 	for _, attempt := range attempts {
 		t.Run(attempt.name, func(t *testing.T) {
@@ -48,11 +48,11 @@ func TestJudgeCannotReadPeerScoresThroughAnyRoute(t *testing.T) {
 
 	// The flip side: a judge must still be able to read their own work, or the
 	// isolation is just a broken console.
-	own := request(t, server, http.MethodGet, "/v1/judge/scores", judgeA, nil)
+	own := request(t, server, http.MethodGet, "/v1/judge/scores?event_id=evt_01", judgeA, nil)
 	if own.Code != http.StatusOK {
 		t.Fatalf("judge reading own scores = %d, want 200, body = %s", own.Code, own.Body.String())
 	}
-	ownExplicit := request(t, server, http.MethodGet, "/v1/judge/scores?judge=judge_a", judgeA, nil)
+	ownExplicit := request(t, server, http.MethodGet, "/v1/judge/scores?judge=judge_a&event_id=evt_01", judgeA, nil)
 	if ownExplicit.Code != http.StatusOK {
 		t.Fatalf("judge reading own scores by name = %d, want 200, body = %s", ownExplicit.Code, ownExplicit.Body.String())
 	}
@@ -62,11 +62,11 @@ func TestParticipantAndVisitorAreNotJudges(t *testing.T) {
 	server, tokens, data := newTestServer(t)
 	participant := tokenFor(t, tokens, data, "participant")
 	for _, path := range []string{
-		"/v1/judge/scores",
-		"/v1/judge/assignments",
-		"/v1/organizer/reviews",
-		"/v1/organizer/results",
-		"/v1/organizer/export.csv",
+		"/v1/judge/scores?event_id=evt_01",
+		"/v1/judge/assignments?event_id=evt_01",
+		"/v1/organizer/reviews?event_id=evt_01",
+		"/v1/organizer/results?event_id=evt_01",
+		"/v1/organizer/export.csv?event_id=evt_01",
 		"/v1/admin/users",
 		"/v1/admin/audit",
 	} {
@@ -75,7 +75,7 @@ func TestParticipantAndVisitorAreNotJudges(t *testing.T) {
 			t.Errorf("participant GET %s = %d, want 401 or 403", path, response.Code)
 		}
 	}
-	anonymous := request(t, server, http.MethodGet, "/v1/judge/scores", "", nil)
+	anonymous := request(t, server, http.MethodGet, "/v1/judge/scores?event_id=evt_01", "", nil)
 	if anonymous.Code != http.StatusUnauthorized {
 		t.Errorf("anonymous GET /v1/judge/scores = %d, want 401", anonymous.Code)
 	}
@@ -193,12 +193,12 @@ func TestJudgeCannotEnumeratePeersThroughAssignments(t *testing.T) {
 		t.Fatalf("seeding an assignment = %d, body = %s", created.Code, created.Body.String())
 	}
 
-	peers := request(t, server, http.MethodGet, "/v1/organizer/assignments?judge_id=judge_b", judgeA, nil)
+	peers := request(t, server, http.MethodGet, "/v1/organizer/assignments?judge_id=judge_b&event_id=evt_01", judgeA, nil)
 	if peers.Code != http.StatusForbidden {
 		t.Fatalf("judge reading a peer's assignments = %d, want 403, body = %s", peers.Code, peers.Body.String())
 	}
 
-	own := request(t, server, http.MethodGet, "/v1/organizer/assignments", judgeB, nil)
+	own := request(t, server, http.MethodGet, "/v1/organizer/assignments?event_id=evt_01", judgeB, nil)
 	if own.Code != http.StatusOK {
 		t.Fatalf("judge reading own assignments = %d, want 200, body = %s", own.Code, own.Body.String())
 	}
