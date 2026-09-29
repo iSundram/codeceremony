@@ -133,6 +133,13 @@ func (s *Server) addEventStaff(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	// Who can administer an event is the most consequential thing an organizer
+	// changes, so it is in the audit trail and not only on the activity feed.
+	// The two are different records: activity is public-facing and filtered,
+	// audit is the accountability record.
+	s.allowed(r, principal, authz.ActionEventStaffManage, event.ID, "event_staff", created.UserID)
+	s.audit(r, principal.UserID, "event.staff_added", "event_staff", created.UserID, event.ID,
+		principal.UserID+" added "+created.UserID+" as "+string(created.Role), map[string]any{"role": created.Role})
 	s.recordActivity(r, principal.UserID, domain.ActivityEvent, "event.staff_added", "event_staff", created.UserID, event.ID, principal.UserID+" added "+created.UserID+" as "+string(created.Role), domain.ActivityOrganizers, map[string]any{"role": created.Role})
 	writeJSON(w, http.StatusCreated, map[string]any{"data": created})
 }
@@ -153,6 +160,9 @@ func (s *Server) removeEventStaff(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "event staff member not found")
 		return
 	}
+	s.allowed(r, principal, authz.ActionEventStaffManage, event.ID, "event_staff", userID)
+	s.audit(r, principal.UserID, "event.staff_removed", "event_staff", userID, event.ID,
+		principal.UserID+" removed "+userID+" from the organizer team", nil)
 	s.recordActivity(r, principal.UserID, domain.ActivityEvent, "event.staff_removed", "event_staff", userID, event.ID, principal.UserID+" removed "+userID+" from the organizer team", domain.ActivityOrganizers, nil)
 	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"user_id": userID, "removed": true}})
 }

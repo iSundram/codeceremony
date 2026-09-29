@@ -152,6 +152,16 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("PUT /v1/admin/users/{userID}/role", s.requireAction(authz.ActionAccountSetRole, s.adminUpdateUserRole))
 	mux.Handle("POST /v1/admin/users/{userID}/sessions/revoke", s.requireAction(authz.ActionAccountRevokeSession, s.adminRevokeUserSessions))
 	mux.Handle("GET /v1/admin/audit", s.requireAction(authz.ActionAuditRead, s.adminAudit))
+	// The action audit and the grant table. Both are staff surfaces: an audit
+	// trail that anyone can read is a trail that leaks who is investigating
+	// what, and a grant table that anyone can read is a map of the standing
+	// access everyone already has.
+	mux.Handle("GET /v1/audit/actions", s.requireAction(authz.ActionAuditRead, s.actionAuditQuery))
+	mux.Handle("GET /v1/audit/actions.csv", s.requireAction(authz.ActionAuditExport, s.actionAuditExport))
+	mux.Handle("GET /v1/audit/verify", s.requireAction(authz.ActionAuditVerify, s.actionAuditVerify))
+	mux.Handle("GET /v1/grants", s.requireAction(authz.ActionGrantManage, s.grantList))
+	mux.Handle("POST /v1/grants", s.requireAction(authz.ActionGrantManage, s.grantCreate))
+	mux.Handle("DELETE /v1/grants/{grantID}", s.requireAction(authz.ActionGrantManage, s.grantRevoke))
 	mux.Handle("GET /v1/events", s.optionalAuth(s.listEvents))
 	mux.Handle("GET /v1/directory", s.optionalAuth(s.eventDirectory))
 	mux.HandleFunc("GET /v1/permissions", s.permissionMatrix)
@@ -429,15 +439,27 @@ func routeEvent(r *http.Request) string {
 // for each handler to fence. Handlers still re-check with the object they load;
 // this establishes the event fence and makes the mismatch detectable.
 func (s *Server) routeTarget(r *http.Request) (authz.Target, bool) {
-	slug := r.PathValue("slug")
-	if slug == "" {
-		return authz.Target{}, true
+	if slug := r.PathValue("slug"); slug != "" {
+		event, err := s.store.EventBySlug(slug)
+		if err != nil {
+			return authz.Target{}, false
+		}
+		return authz.Target{EventID: event.ID, Resource: "event"}, true
 	}
-	event, err := s.store.EventBySlug(slug)
-	if err != nil {
-		return authz.Target{}, false
+	// The organizer routes are addressed by ?event_id= rather than by slug.
+	// Resolving it here is what lets a per-event grant or deny match them; a
+	// grant scoped to event 7 would otherwise never fire on a route that names
+	// event 7 in a query parameter.
+	if raw := r.URL.Query().Get("event_id"); raw != "" {
+		event, err := s.store.EventByID(raw)
+		if err != nil {
+			// A handler that wants to report its own 404 does so; the gate
+			// simply has no event to scope against.
+			return authz.Target{}, true
+		}
+		return authz.Target{EventID: event.ID, Resource: "event"}, true
 	}
-	return authz.Target{EventID: event.ID, Resource: "event"}, true
+	return authz.Target{}, true
 }
 
 // requireRouteEvent refuses when a handler is about to act on an event other
@@ -599,6 +621,15 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   s.cfg.SessionTTLHours * 3600,
 	})
+	// A successful sign-in is in the trail. Failed ones are recorded too, by the
+	// unauthenticated hook, and that is the half that matters for detecting
+	// probing. There is no principal on the context yet because the caller has
+	// not been authorized by the time this point is reached, so the entry is
+	// built from the account that was just authenticated.
+	s.store.RecordAction(finalizeAudit(
+		s.auditEntry(r, auth.Principal{UserID: user.ID, Role: user.Role, Email: user.Email}, authz.ActionAccountReadSelf),
+		"user", user.ID, "", "signed in", true,
+	))
 	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"access_token": token, "user": user}})
 }
 
@@ -623,6 +654,10 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})
+	if principal, ok := auth.PrincipalFromContext(r.Context()); ok {
+		s.allowed(r, principal, authz.ActionSessionRevokeOwn, "", "session", principal.SessionID)
+		s.audit(r, principal.UserID, "auth.logout", "session", principal.SessionID, "", "signed out", nil)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]string{"status": "logged_out"}})
 }
 
@@ -745,6 +780,9 @@ func (s *Server) createSubmission(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "validation_error", "submission could not be created")
 		return
 	}
+	s.allowed(r, principal, authz.ActionSubmissionCreate, event.ID, "submission", submission.ID)
+	s.audit(r, principal.UserID, "submission.created", "submission", submission.ID, event.ID,
+		team.Name+" submitted "+submission.Title, map[string]any{"track_id": submission.TrackID, "version": submission.Version})
 	s.recordActivity(r, principal.UserID, domain.ActivitySubmission, "submission.created", "submission", submission.ID, event.ID,
 		team.Name+" submitted "+submission.Title, domain.ActivityPublic, map[string]any{"track_id": submission.TrackID, "version": submission.Version})
 	s.webhooks.Emit(event.ID, "submission.created", event.Slug, map[string]any{
@@ -844,6 +882,23 @@ func (s *Server) saveReview(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	// Writing a review is the single most consequential thing a judge does, so
+	// it is in the accountability record with the project, the rubric version and
+	// whether the score was finalised. The criteria themselves are deliberately
+	// not recorded here: the review row is the record of the scores, and
+	// duplicating them in the audit would mean two places to redact.
+	action := authz.ActionReviewWriteOwn
+	summary := "saved a draft review"
+	if saved.Submitted {
+		action = authz.ActionReviewSubmit
+		summary = "submitted a review"
+	}
+	s.allowed(r, principal, action, saved.EventID, "review", saved.ID)
+	s.audit(r, principal.UserID, "judging."+grantEffect(saved.Submitted), "review", saved.ID, saved.EventID,
+		summary, map[string]any{
+			"project_id": saved.ProjectID, "rubric_id": saved.RubricID,
+			"rubric_version": saved.RubricVersion, "submitted": saved.Submitted,
+		})
 	if saved.Submitted {
 		s.recordActivity(r, principal.UserID, domain.ActivityJudging, "review.submitted", "submission", saved.ProjectID, saved.EventID,
 			"a judge completed a review", domain.ActivityParticipants, map[string]any{"review_id": saved.ID, "rubric_version": saved.RubricVersion})

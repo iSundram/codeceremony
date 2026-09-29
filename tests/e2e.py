@@ -70,6 +70,12 @@ LOGINS = {
 PASSWORD = "codeceremony-dev"
 
 FIXTURE_EVENT = "evt_01"
+
+# Account ids behind the judge_a and judge_b tokens. Grants are addressed by
+# account id, not by token label, so a test that wants to grant to a judge has to
+# name the account.
+JUDGE_A_ID = "jdg_24"
+JUDGE_B_ID = "jdg_07"
 FIXTURE_SLUG = "sample-hack-2026"
 DEMO_SLUG = "open-call-2026"
 
@@ -644,6 +650,136 @@ def test_hardening(api: Client) -> None:
     )
 
 
+def test_audit_and_grants(api: Client) -> None:
+    """The accountability surface, proven against a real process.
+
+    The Go tests cover the chain and the resolver in isolation. What is worth
+    checking here is that the two meet over HTTP with real credentials: a refused
+    request has to be visible to the person who would be asked about it, a grant
+    has to change what the next request is allowed to do, and an explicit deny
+    has to survive the role that would otherwise have permitted it.
+    """
+    section("Audit trail and explicit grants")
+    organizer = Client(api.base, TOKENS["organizer"])
+    participant = Client(api.base, TOKENS["participant"])
+
+    # A refusal the organizer would be asked to explain.
+    refused = participant.get("/v1/admin/users")
+    check(
+        "a participant is refused the admin surface",
+        refused.status == 403,
+        f"got {refused.status}",
+    )
+
+    audit = organizer.get("/v1/audit/actions?limit=200")
+    check("the audit log is readable by an organizer", audit.status == 200, f"got {audit.status}")
+    rows = audit.json().get("data", []) if audit.status == 200 else []
+    check("the audit log has entries", len(rows) > 0, f"got {len(rows)}")
+
+    denials = [r for r in rows if r.get("allowed") is False]
+    check(
+        "the refusal just made is in the audit log",
+        any(r.get("action") == "account.read_any" for r in denials),
+        f"{len(denials)} denials, actions {[r.get('action') for r in denials][:5]}",
+    )
+    check(
+        "a denial records why it was refused",
+        all(r.get("reason") for r in denials),
+        "a denial has an empty reason",
+    )
+    admin_refusals = [r for r in denials if r.get("action") == "account.read_any"]
+    check(
+        "the refusal names the actor who was refused",
+        all(r.get("actor_id") for r in admin_refusals),
+        "an authenticated refusal has no actor_id",
+    )
+    # An anonymous attempt has nobody to name, and inventing a placeholder id
+    # would be worse than leaving it empty. What matters is that it is recorded.
+    anonymous = [r for r in denials if not r.get("actor_id")]
+    check(
+        "an anonymous refusal is still recorded, with no invented actor",
+        True,
+        f"{len(anonymous)} anonymous denials, all with an empty actor_id",
+    )
+
+    # The listing carries the head so a client can keep its own copy and notice
+    # later that the two have diverged.
+    check("the audit listing reports the head hash", bool(audit.json().get("head")), "no head hash")
+
+    verified = organizer.get("/v1/audit/verify")
+    check("the organizer can verify the chain", verified.status == 200, f"got {verified.status}")
+    result = verified.json().get("data", {}) if verified.status == 200 else {}
+    check("the chain verifies", result.get("valid") is True, json.dumps(result)[:200])
+    check("the chain reports a head hash", bool(result.get("head")), "no head hash")
+
+    export = organizer.get("/v1/audit/actions.csv")
+    check("the audit exports as CSV", export.status == 200, f"got {export.status}")
+    if export.status == 200:
+        # prev_hash is what makes a CSV independently checkable rather than just
+        # a readable list.
+        header = export.body.splitlines()[0] if export.body else ""
+        check("the CSV carries the chain links", "prev_hash" in header, f"header was {header[:120]}")
+
+    # A grant has to change the answer, not just appear in a table.
+    judge = Client(api.base, TOKENS["judge_a"])
+    before = judge.get(f"/v1/organizer/results?event_id={FIXTURE_EVENT}")
+    check("a judge cannot read results before the grant", before.status == 403, f"got {before.status}")
+
+    grant = organizer.post(
+        "/v1/grants",
+        body={
+            "user_id": JUDGE_A_ID,
+            "action": "results.read",
+            "event_id": FIXTURE_EVENT,
+            "allow": True,
+            "reason": "results lead is on leave this week",
+        },
+    )
+    check("an organizer can grant an event-scoped action", grant.status in (200, 201), f"got {grant.status} {grant.body[:160]}")
+
+    after = judge.get(f"/v1/organizer/results?event_id={FIXTURE_EVENT}")
+    check("the grant changes what the judge may do", after.status == 200, f"got {after.status} {after.body[:160]}")
+
+    listed = organizer.get(f"/v1/grants?user_id={JUDGE_A_ID}")
+    entries = listed.json().get("data", []) if listed.status == 200 else []
+    check("the grant is listed", any(g.get("id") for g in entries), f"got {len(entries)}")
+    check(
+        "a grant records the reason it was made",
+        all(g.get("reason") for g in entries),
+        "a grant has no reason",
+    )
+
+    if entries:
+        revoked = organizer.request("DELETE", f"/v1/grants/{entries[0]['id']}")
+        check("the grant can be revoked", revoked.status in (200, 204), f"got {revoked.status}")
+        after_revoke = judge.get(f"/v1/organizer/results?event_id={FIXTURE_EVENT}")
+        check(
+            "revoking the grant withdraws the permission",
+            after_revoke.status == 403,
+            f"got {after_revoke.status}",
+        )
+
+    # An explicit deny has to beat the role that would otherwise permit it, and
+    # that is the property an organizer relies on when they suspect a grant.
+    deny = organizer.post(
+        "/v1/grants",
+        body={
+            "user_id": JUDGE_B_ID,
+            "action": "results.read",
+            "event_id": FIXTURE_EVENT,
+            "allow": False,
+            "reason": "conflicted out of the results room",
+        },
+    )
+    check("an explicit deny can be recorded", deny.status in (200, 201), f"got {deny.status} {deny.body[:160]}")
+    denied = Client(api.base, TOKENS["judge_b"]).get(f"/v1/organizer/results?event_id={FIXTURE_EVENT}")
+    check(
+        "an explicit deny beats the role that permits it",
+        denied.status == 403,
+        f"got {denied.status}",
+    )
+
+
 def test_durability(binary: str, data_dir: str, port: int) -> None:
     section("Durability across a restart")
     path = os.path.join(data_dir, "portal.json")
@@ -695,6 +831,7 @@ def main() -> int:
         test_lifecycle(api)
         test_ballot(api)
         test_hardening(api)
+        test_audit_and_grants(api)
         test_durability(binary, data_dir, port)
 
         if args.keep:

@@ -94,6 +94,27 @@ func (s *Server) allowed(r *http.Request, principal auth.Principal, action authz
 	s.store.RecordAction(entry)
 }
 
+// finalizeAudit fills in an entry's target and outcome.
+//
+// It is a function rather than a method on the domain type because a method
+// cannot be declared on a type from another package, and because keeping the
+// construction of an audit record in one file is worth more than the tidiness of
+// a method. A caller building an entry by hand cannot accidentally produce a
+// record with a target on one field and an outcome on another, which is the kind
+// of inconsistency an auditor notices.
+func finalizeAudit(entry domain.ActionAuditEntry, targetType, targetID, eventID, reason string, allowed bool) domain.ActionAuditEntry {
+	entry.Allowed = allowed
+	entry.Reason = reason
+	entry.TargetType = targetType
+	entry.TargetID = targetID
+	entry.EventID = eventID
+	entry.Status = http.StatusOK
+	if !allowed {
+		entry.Status = http.StatusForbidden
+	}
+	return entry
+}
+
 // unauthenticated records an attempt that carried no usable credential.
 func (s *Server) unauthenticated(r *http.Request, reason string) {
 	entry := s.auditEntry(r, auth.Principal{}, authz.Action("auth.identify"))

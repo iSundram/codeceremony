@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/iSundram/codeceremony/backend/internal/auth"
+	"github.com/iSundram/codeceremony/backend/internal/authz"
 	"github.com/iSundram/codeceremony/backend/internal/domain"
 )
 
@@ -303,6 +304,29 @@ func (s *Server) teamTarget(w http.ResponseWriter, r *http.Request, principal au
 	return team, target, true
 }
 
+// audit records an action that succeeded.
+//
+// It writes two records on purpose, and the duplication is deliberate rather
+// than an oversight:
+//
+//   - an AuditEvent, which is what GET /v1/admin/audit has always read. It is
+//     mutable and unchained, which is fine for an operational view.
+//   - an ActionAuditEntry, which is hash-chained, queryable by action, and the
+//     record an organizer can hand to a third party to verify.
+//
+// Routing every existing call site through here is what gives the chain coverage
+// across the whole surface without touching sixty call sites, and it means a
+// handler that audits cannot accidentally skip the chain.
 func (s *Server) audit(r *http.Request, actorID, action, targetType, targetID, eventID, reason string, metadata map[string]any) {
 	_ = s.store.RecordAudit(domain.AuditEvent{ID: domain.NewID("aud"), EventID: eventID, ActorID: actorID, Action: action, TargetType: targetType, TargetID: targetID, Reason: reason, Metadata: metadata, RequestID: r.Header.Get("X-Request-ID"), CreatedAt: s.now().UTC()})
+
+	principal := auth.Principal{UserID: actorID}
+	if user, err := s.store.UserByID(actorID); err == nil {
+		principal.Role = user.Role
+		principal.Email = user.Email
+		principal.State = user.State
+	}
+	entry := s.auditEntry(r, principal, authz.Action(action))
+	entry = finalizeAudit(entry, targetType, targetID, eventID, reason, true)
+	s.store.RecordAction(entry)
 }

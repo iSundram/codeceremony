@@ -69,3 +69,32 @@ func TestLoadRejectsInvalidSMTPPort(t *testing.T) {
 		t.Fatal("Load() error = nil, want SMTP port error")
 	}
 }
+
+func TestAuditSecretFallsBackToTheSessionSecret(t *testing.T) {
+	t.Setenv("SESSION_SECRET", "a-real-session-secret")
+	t.Setenv("AUDIT_SECRET", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.AuditSecret != "a-real-session-secret" {
+		t.Errorf("AuditSecret = %q, want the session secret", cfg.AuditSecret)
+	}
+	if !cfg.AuditSecretIsDerived() {
+		t.Error("a borrowed audit secret was not reported as derived")
+	}
+
+	// A dedicated key wins, and is the point of having one: rotating sessions
+	// must not invalidate the audit.
+	t.Setenv("AUDIT_SECRET", "a-real-audit-secret")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.AuditSecret != "a-real-audit-secret" {
+		t.Errorf("AuditSecret = %q, want the configured value", cfg.AuditSecret)
+	}
+	if cfg.AuditSecretIsDerived() {
+		t.Error("a configured audit secret was reported as derived")
+	}
+}

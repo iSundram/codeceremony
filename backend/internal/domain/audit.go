@@ -123,16 +123,59 @@ type AuditChainResult struct {
 	Dropped int `json:"dropped,omitempty"`
 }
 
-// VerifyAuditChain walks a sequence of entries and reports the first break.
+// VerifyAuditSuffix verifies a chain whose oldest entries have been trimmed.
 //
-// Three things are checked, and all three matter: that each entry's own hash
-// recomputes, that it chains to the previous entry's hash, and that the sequence
-// numbers are contiguous. A gap in the sequence is as much a sign of tampering as
-// a changed hash, and is the cheaper tamper to perform.
-func VerifyAuditChain(entries []ActionAuditEntry, key []byte) AuditChainResult {
-	previous := AuditChainHead
-	var lastSeq int64
-	for index, entry := range entries {
+// The distinction from VerifyAuditChain is the whole point of the function. A
+// full chain is checked against genesis, which is what makes a deleted or
+// rewritten prefix detectable. A suffix cannot be: the genesis hash is gone, so
+// the first retained entry can only be anchored by its own PrevHash and by the
+// number of entries the operator says they removed.
+//
+// That is weaker, and the function is deliberately explicit about where the
+// weakness is rather than hiding it behind a passing result. Two things bound
+// it. The retained entries must still chain to one another, so nothing inside
+// the window can be edited or removed. And the first retained sequence number
+// must equal dropped+1, so an operator cannot quietly discard entries and still
+// present the remainder as a complete log.
+//
+// What a suffix cannot rule out is a wholesale rewrite of the discarded prefix.
+// A verifier who needs that guarantee must anchor the head against a copy they
+// hold independently; publishing the head hash on every export exists for
+// exactly that purpose.
+func VerifyAuditSuffix(entries []ActionAuditEntry, key []byte, dropped int) AuditChainResult {
+	if dropped == 0 {
+		return VerifyAuditChain(entries, key)
+	}
+	if len(entries) == 0 {
+		return AuditChainResult{Valid: true, Head: "", Dropped: dropped}
+	}
+	first := entries[0]
+	if first.Seq != int64(dropped)+1 {
+		return AuditChainResult{
+			Entries:     len(entries),
+			Valid:       false,
+			BrokenAtSeq: first.Seq,
+			Detail:      "first retained sequence number does not match the reported number of dropped entries",
+			Dropped:     dropped,
+		}
+	}
+	if first.PrevHash == "" || first.PrevHash == AuditChainHead {
+		return AuditChainResult{
+			Entries:     len(entries),
+			Valid:       false,
+			BrokenAtSeq: first.Seq,
+			Detail:      "first retained entry has no predecessor hash, so the chain is not a suffix of a longer one",
+			Dropped:     dropped,
+		}
+	}
+	result := verifyLinked(entries, key, first.PrevHash, first.Seq-1)
+	result.Dropped = dropped
+	return result
+}
+
+// verifyLinked checks contiguity and linkage from a known predecessor.
+func verifyLinked(entries []ActionAuditEntry, key []byte, previous string, lastSeq int64) AuditChainResult {
+	for _, entry := range entries {
 		if entry.Seq != lastSeq+1 {
 			return AuditChainResult{
 				Entries:     len(entries),
@@ -162,7 +205,16 @@ func VerifyAuditChain(entries []ActionAuditEntry, key []byte) AuditChainResult {
 		}
 		previous = entry.Hash
 		lastSeq = entry.Seq
-		_ = index
 	}
 	return AuditChainResult{Entries: len(entries), Valid: true, Head: previous}
+}
+
+// VerifyAuditChain walks a sequence of entries and reports the first break.
+//
+// Three things are checked, and all three matter: that each entry's own hash
+// recomputes, that it chains to the previous entry's hash, and that the sequence
+// numbers are contiguous. A gap in the sequence is as much a sign of tampering as
+// a changed hash, and is the cheaper tamper to perform.
+func VerifyAuditChain(entries []ActionAuditEntry, key []byte) AuditChainResult {
+	return verifyLinked(entries, key, AuditChainHead, 0)
 }

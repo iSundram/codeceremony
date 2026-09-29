@@ -113,6 +113,14 @@ var RoleDefaults = map[domain.Role][]Action{
 		ActionExportFull,
 		ActionImportApply,
 		ActionAuditRead,
+		// Exporting and verifying the chain, and managing grants, are
+		// event-owner jobs. Each is fenced by the event on the target, so an
+		// organizer reaches them for their own events and nothing else. The
+		// export in particular is what makes the chain useful: an organizer
+		// who cannot produce the log cannot hand it to anyone to check.
+		ActionAuditExport,
+		ActionAuditVerify,
+		ActionGrantManage,
 		ActionIntegrationManage,
 		ActionMailSend,
 		ActionMailRead,
@@ -235,7 +243,8 @@ var EventRoleGrants = map[domain.EventRole][]Action{
 		ActionVoteCampaignManage,
 		ActionCommentModerate, ActionCommentReadHidden,
 		ActionExportCSV, ActionExportFull, ActionImportApply,
-		ActionAuditRead, ActionIntegrationManage, ActionMailSend, ActionMailRead,
+		ActionAuditRead, ActionAuditExport, ActionAuditVerify, ActionGrantManage,
+		ActionIntegrationManage, ActionMailSend, ActionMailRead,
 		ActionAccountReadAny, ActionAccountRevokeSession, ActionSessionReadAny,
 	},
 	domain.EventRoleCoOrganizer: {

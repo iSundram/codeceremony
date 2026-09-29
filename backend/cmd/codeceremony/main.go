@@ -78,7 +78,14 @@ func run() {
 		logger.Error("could not hash seed password", "error", err)
 		os.Exit(1)
 	}
-	portal := store.New(seed.Data{})
+	// The audit key is set here rather than in the seed because the seed is
+	// skipped entirely on a restored boot, and it is the store built here that
+	// serves traffic in that case. Seeding only overwrites data, not the key.
+	portal := store.New(seed.Data{AuditSecret: cfg.AuditSecret})
+	if cfg.AuditSecretIsDerived() {
+		logger.Warn("the action audit chain is keyed from SESSION_SECRET",
+			"hint", "set AUDIT_SECRET before rotating SESSION_SECRET, or historical audit entries will stop verifying")
+	}
 	tokens := auth.NewSessionManager(time.Duration(cfg.SessionTTLHours)*time.Hour, portal)
 
 	// Durability first. A data directory that already holds state wins over the

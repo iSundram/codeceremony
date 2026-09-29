@@ -9,27 +9,35 @@ import (
 )
 
 type Config struct {
-	Environment     string
-	HTTPAddr        string
-	SessionSecret   string
-	AllowedOrigin   string
-	SeedDemoData    bool
-	SeedPassword    string
-	SessionTTLHours int
-	SMTPHost        string
-	SMTPPort        int
-	SMTPUsername    string
-	SMTPPassword    string
-	SMTPFrom        string
-	SMTPFromName    string
-	SMTPEncryption  string
-	AppBaseURL      string
-	MailInterval    int
-	MailBatchSize   int
-	MailMaxAttempts int
-	DataDir         string
-	FixturesPath    string
-	PersistInterval time.Duration
+	Environment   string
+	HTTPAddr      string
+	SessionSecret string
+	// AuditSecret keys the hash chain on the action audit. It defaults to the
+	// session secret so a working portal does not need a second variable, and is
+	// separate so an operator can rotate sessions without invalidating the audit.
+	AuditSecret string
+	// auditSecretFromSession records that the audit key is derived rather than
+	// configured, so boot can say so instead of leaving an operator to assume
+	// they set it.
+	auditSecretFromSession bool
+	AllowedOrigin          string
+	SeedDemoData           bool
+	SeedPassword           string
+	SessionTTLHours        int
+	SMTPHost               string
+	SMTPPort               int
+	SMTPUsername           string
+	SMTPPassword           string
+	SMTPFrom               string
+	SMTPFromName           string
+	SMTPEncryption         string
+	AppBaseURL             string
+	MailInterval           int
+	MailBatchSize          int
+	MailMaxAttempts        int
+	DataDir                string
+	FixturesPath           string
+	PersistInterval        time.Duration
 }
 
 const defaultSeedPassword = "codeceremony-dev"
@@ -39,6 +47,7 @@ func Load() (Config, error) {
 		Environment:     envOr("APP_ENV", "development"),
 		HTTPAddr:        envOr("HTTP_ADDR", ":8080"),
 		SessionSecret:   envOr("SESSION_SECRET", "codeceremony-local-development-secret-change-me"),
+		AuditSecret:     envOr("AUDIT_SECRET", ""),
 		AllowedOrigin:   envOr("ALLOWED_ORIGIN", "http://localhost:3000"),
 		SessionTTLHours: 12,
 		SeedPassword:    envOr("SEED_PASSWORD", defaultSeedPassword),
@@ -123,6 +132,16 @@ func Load() (Config, error) {
 	if cfg.Environment == "production" && cfg.SessionSecret == "codeceremony-local-development-secret-change-me" {
 		return Config{}, fmt.Errorf("SESSION_SECRET must be changed in production")
 	}
+	// An audit chain signed with a predictable key is not tamper evident, it is
+	// only tamper resistant against a careless operator. Falling back to the
+	// session secret is deliberate, and is why the fallback is checked here
+	// rather than left to fail quietly at verification time.
+	if strings.TrimSpace(cfg.AuditSecret) == "" {
+		cfg.AuditSecret = cfg.SessionSecret
+		// No logger is available here, so the fallback is surfaced through the
+		// effective value, which the boot log already prints.
+		cfg.auditSecretFromSession = true
+	}
 	// Seeding mints fixed, publicly documented session tokens for accounts that
 	// hold organizer and admin rights, and hashes one shared password. That is
 	// correct for a self-hosted demo and indefensible in production, so opting
@@ -140,6 +159,14 @@ func Load() (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// AuditSecretIsDerived reports whether the audit chain key is borrowed from the
+// session secret rather than set on its own. Boot uses it to say so out loud,
+// because an operator who later rotates SESSION_SECRET would otherwise discover
+// the consequence by watching old audit entries stop verifying.
+func (c Config) AuditSecretIsDerived() bool {
+	return c.auditSecretFromSession
 }
 
 func (c Config) IsProduction() bool {

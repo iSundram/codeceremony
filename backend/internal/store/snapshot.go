@@ -440,6 +440,14 @@ func sortBy[T any](items []T, key func(T) string) []T {
 // snapshot. It is used on a cold boot, and it is deliberately separate from
 // Restore so that a restore can never be mistaken for a seed.
 func (s *Store) SeedFrom(data seed.Data) {
+	// Seeding replaces data, never the audit key. A seed set with no key must not
+	// be able to blank a key that the composition root configured, or the chain
+	// would silently start signing with the empty string.
+	if strings.TrimSpace(data.AuditSecret) == "" {
+		s.mu.Lock()
+		data.AuditSecret = string(s.actionAudit.key)
+		s.mu.Unlock()
+	}
 	seeded := New(data)
 	s.mu.Lock()
 	defer s.mu.Unlock()

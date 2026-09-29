@@ -135,12 +135,11 @@ func (s *Store) VerifyActionAudit() domain.AuditChainResult {
 	entries := make([]domain.ActionAuditEntry, len(s.actionAudit.entries))
 	copy(entries, s.actionAudit.entries)
 	// After retention trimming the oldest retained entry no longer chains to
-	// genesis, and VerifyAuditChain checks contiguity from the first entry it is
-	// given, so the retained suffix verifies on its own terms. The dropped count
-	// is reported so a verifier knows it holds a suffix.
-	result := domain.VerifyAuditChain(entries, s.actionAudit.key)
-	result.Dropped = s.actionAudit.dropped
-	return result
+	// genesis, so verifying the whole thing against the genesis hash would fail
+	// on correct data. The suffix verifier checks the retained window against
+	// itself and confirms the operator's dropped count, which is the strongest
+	// claim the retained data can support.
+	return domain.VerifyAuditSuffix(entries, s.actionAudit.key, s.actionAudit.dropped)
 }
 
 // ActionAuditHead is the hash of the newest entry.
