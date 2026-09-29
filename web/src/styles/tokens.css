@@ -1,0 +1,148 @@
+/* CodeCeremony design tokens.
+ *
+ * Every value in this file is transcribed from design.md. The section number is
+ * quoted above each block so a value can be traced to the clause that authorises
+ * it, and a test asserts that no hex, radius, shadow, spacing or motion value
+ * outside design.md ever appears in the stylesheet.
+ *
+ * This file contains no component rules. It is the single place a value is
+ * defined, so a component can only deviate by not using a token, which is
+ * visible in review.
+ */
+
+:root {
+  /* ---- §3.1 Approved palette. These six are the only base colours. ---- */
+  --ink: #33343b;
+  --navy: #48547c;
+  --warm-gray: #aaa59f;
+  --mist: #cfe7f8;
+  --accent-blue: #749dd0;
+  --accent-periwinkle: #92aad1;
+
+  /* ---- §3.2 Semantic tokens ---- */
+  --color-canvas: var(--mist);
+  --color-surface: var(--mist);
+  /* 18% accent-periwinkle over mist, composited. design.md expresses this as a
+   * blend; the resolved value is a token so no component does the maths. */
+  --color-surface-muted: #c4dcf1;
+  --color-surface-raised: var(--mist);
+  /* 16% warm-gray over mist, composited. */
+  --color-surface-warm: #c9dcea;
+  --color-text-primary: var(--ink);
+  --color-text-secondary: var(--navy);
+  /* navy at 72% over mist, composited. This lands at 3.23:1, which clears
+   * WCAG AA for large text (3:1) and not for body text (4.5:1). design.md
+   * already restricts this token to "nonessential metadata, never used for
+   * critical instructions", so the type scale carries the restriction: it is
+   * only ever used at heading-2 size or above. Anything a user must read to
+   * proceed uses --color-text-secondary at 5.80:1. See design.md §3.4. */
+  --color-text-muted: #6e7d9f;
+  --color-text-disabled: var(--warm-gray);
+  --color-text-on-dark: var(--mist);
+  --color-border: var(--accent-periwinkle);
+  --color-border-strong: var(--navy);
+  --color-accent: var(--accent-blue);
+  --color-accent-soft: var(--accent-periwinkle);
+  --color-focus: var(--navy);
+  /* navy at 24% over mist, composited. */
+  --color-overlay: #afc4da;
+  /* navy at the approved alpha levels in §3.6. */
+  --color-shadow: rgba(72, 84, 124, 0.08);
+  --color-shadow-1: rgba(72, 84, 124, 0.1);
+  --color-shadow-2: rgba(72, 84, 124, 0.14);
+
+  /* Alpha of the approved colours, for hover, disabled, border and shadow
+   * states. §1.2 permits alpha of an approved colour; it must not introduce a
+   * new hue, so each of these is one of the six above. */
+  --accent-blue-08: rgba(116, 157, 208, 0.08);
+  --accent-blue-16: rgba(116, 157, 208, 0.16);
+  --accent-blue-24: rgba(116, 157, 208, 0.24);
+  --accent-periwinkle-08: rgba(146, 170, 209, 0.08);
+  --accent-periwinkle-16: rgba(146, 170, 209, 0.16);
+  --accent-periwinkle-24: rgba(146, 170, 209, 0.24);
+  --navy-08: rgba(72, 84, 124, 0.08);
+  --navy-12: rgba(72, 84, 124, 0.12);
+  --navy-24: rgba(72, 84, 124, 0.24);
+  --mist-48: rgba(207, 231, 248, 0.48);
+  --mist-72: rgba(207, 231, 248, 0.72);
+
+  /* ---- §3.5 Approved gradients. No others are permitted. ---- */
+  --gradient-ribbon: linear-gradient(135deg, #cfe7f8 0%, #92aad1 52%, #749dd0 100%);
+  --gradient-ink: linear-gradient(135deg, #48547c 0%, #749dd0 100%);
+  --gradient-mist: linear-gradient(135deg, #cfe7f8 0%, #92aad1 100%);
+  --gradient-warm: linear-gradient(135deg, #cfe7f8 0%, #aaa59f 100%);
+
+  /* ---- §4.1 Font stacks. System fallbacks only; no font is fetched. ---- */
+  --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", SFMono-Regular, Consolas, "Liberation Mono", monospace;
+
+  /* ---- §4.2 Type scale. Size, line height, weight, and the tracking the
+   * scale itself specifies. ---- */
+  --text-display-1: 800 48px/56px var(--font-ui);
+  --text-display-2: 800 40px/48px var(--font-ui);
+  --text-heading-1: 700 32px/40px var(--font-ui);
+  --text-heading-2: 700 24px/32px var(--font-ui);
+  --text-heading-3: 600 20px/28px var(--font-ui);
+  --text-body-large: 400 18px/28px var(--font-ui);
+  --text-body: 400 16px/24px var(--font-ui);
+  --text-body-small: 400 14px/20px var(--font-ui);
+  --text-label: 600 13px/18px var(--font-ui);
+  --text-overline: 700 11px/14px var(--font-ui);
+  --text-code: 400 13px/20px var(--font-mono);
+  --tracking-overline: 0.12em;
+
+  /* ---- §5.1 Spacing scale. Base unit 4px. Nothing else. ---- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+
+  /* ---- §5.2 Application shell ---- */
+  --shell-sidebar: 264px;
+  --shell-sidebar-collapsed: 84px;
+  --shell-topbar: 72px;
+  --shell-topbar-mobile: 56px;
+  --shell-content-max: 1440px;
+  --shell-padding-desktop: 32px;
+  --shell-padding-tablet: 24px;
+  --shell-padding-mobile: 16px;
+  --shell-grid-gap: 24px;
+  --shell-drawer: 280px;
+
+  /* ---- §3.6 Elevation. Three levels, no others. ---- */
+  --shadow-0: 0 1px 2px rgba(72, 84, 124, 0.08);
+  --shadow-1: 0 8px 24px rgba(72, 84, 124, 0.1);
+  --shadow-2: 0 20px 50px rgba(72, 84, 124, 0.14);
+
+  /* ---- §9.1 Radius scale. Five values, no others. ---- */
+  --radius-small: 8px;
+  --radius-control: 12px;
+  --radius-card: 16px;
+  --radius-panel: 24px;
+  --radius-pill: 999px;
+
+  /* ---- §11.1 Motion tokens, and the two approved curves ---- */
+  --motion-instant: 120ms;
+  --motion-fast: 180ms;
+  --motion-normal: 240ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  /* ---- §8, §13 Interaction minimums, restated as tokens so a component
+   * cannot pick its own size. ---- */
+  --control-min: 44px;
+  --nav-item-min: 44px;
+  --row-min: 48px;
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+
+  /* ---- §8.5 and §10.1 layout minimums ---- */
+  --measure: 75ch;
+}

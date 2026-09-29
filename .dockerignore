@@ -1,0 +1,21 @@
+# Build context hygiene. The context is the repository root because the frontend
+# is a separate Docker build stage, so this matters more here than it would in a
+# backend-only project: without it, node_modules and the staged build would be
+# uploaded to the daemon on every build.
+
+**/node_modules
+**/dist
+web/dist
+backend/internal/httpapi/webassets/spa/*
+!backend/internal/httpapi/webassets/spa/.gitkeep
+
+# Version control and editor state.
+.git
+.gitignore
+**/.DS_Store
+**/*.swp
+
+# Local data and logs. A data directory must never be baked into an image.
+backend/data
+data
+*.log

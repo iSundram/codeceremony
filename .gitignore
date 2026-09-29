@@ -49,3 +49,8 @@ coverage/
 .idea/
 .vscode/
 *.swp
+
+# The built frontend is a build artifact and is never committed. The build
+# embeds it into the binary, so the image carries it; the repository does not.
+backend/internal/httpapi/webassets/spa/*
+!backend/internal/httpapi/webassets/spa/.gitkeep

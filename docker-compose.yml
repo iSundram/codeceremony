@@ -8,12 +8,19 @@
 #
 # Everything is published on 8080 by default. Override with
 # CODE_CEREMONY_PORT if that port is taken.
+#
+# The image is built from the repository root because the frontend is a separate
+# build stage. The runtime is still one static Go binary: Node exists in the
+# build, not in the image that runs.
 
 services:
   api:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      # The context is the repository root rather than ./backend, because the
+      # frontend stage needs web/ and the Go stage needs backend/. The build
+      # itself still produces one binary with no Node in it.
+      context: .
+      dockerfile: backend/Dockerfile
     image: codeceremony:local
     container_name: codeceremony
     restart: unless-stopped

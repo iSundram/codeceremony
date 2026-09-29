@@ -285,6 +285,9 @@ func (s *Server) Handler() http.Handler {
 	// The HTML frontend is mounted after the API so that the explicit /v1
 	// namespace can never be shadowed by a page pattern.
 	s.registerWeb(mux)
+	// The built app is registered last so it acts as a fallback for paths no
+	// API or page route claims, rather than shadowing either.
+	s.registerSPA(mux)
 
 	s.routes = mux.recorded()
 	return s.middleware(mux)

@@ -1,0 +1,820 @@
+/* CodeCeremony application shell.
+ *
+ * §5.2 fixes the shell dimensions and §6 fixes the sidebar's behaviour. The
+ * mobile drawer is not a second navigation design: it is the same sidebar
+ * markup inside a <dialog>, which is what §6.2 requires.
+ *
+ * Layout is CSS-only. The sidebar collapse, the drawer, and the theme of a page
+ * are all driven by markup and one inline script for focus management, because
+ * the portal must render with scripting unavailable.
+ */
+
+.shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: var(--shell-sidebar) minmax(0, 1fr);
+  grid-template-rows: var(--shell-topbar) minmax(0, 1fr);
+  grid-template-areas:
+    "brand  topbar"
+    "side   main";
+}
+
+/* ---- §6.1 Sidebar ------------------------------------------------------- */
+
+.sidebar {
+  grid-area: side;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--color-surface);
+  /* §6.1 allows a subtle accent-periwinkle alpha layer if needed. It is not
+   * needed here: the canvas and the surface are both mist, so the sidebar is
+   * separated by its right border alone, which is what §9.2 prefers. */
+  border-right: 1px solid var(--color-border);
+}
+
+.sidebar__scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-3) var(--space-6);
+}
+
+.sidebar__footer {
+  flex: 0 0 auto;
+  padding: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+/* §6.1: the sidebar footer is reserved for approved utility content only, so
+ * this holds the signed-in identity and nothing else. No promotional card. */
+
+/* ---- SidebarBrand. §6.1: brand lockup at the top with consistent clear
+ * space, which is the height of the smallest logo mark. ---- */
+
+.sidebar-brand {
+  grid-area: brand;
+  display: flex;
+  align-items: center;
+  height: var(--shell-topbar);
+  padding: 0 var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+  text-decoration: none;
+}
+
+.sidebar-brand__lockup {
+  display: flex;
+  align-items: center;
+  /* Clear space equal to the height of the smallest mark. */
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.sidebar-brand__logo {
+  height: 28px;
+  width: auto;
+  flex: 0 0 auto;
+}
+
+.sidebar-brand__icon {
+  height: 28px;
+  width: 28px;
+  flex: 0 0 auto;
+}
+
+.sidebar-brand__name {
+  font: var(--text-heading-3);
+  font-weight: 700;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+
+/* ---- §7.2 SidebarNavGroup and SidebarNavItem ---- */
+
+.nav-group + .nav-group {
+  margin-top: var(--space-6);
+}
+
+.nav-group__label {
+  /* §4.2: uppercase is allowed for overlines and compact metadata. */
+  padding: 0 var(--space-3) var(--space-2);
+  font: var(--text-overline);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-overline);
+  color: var(--color-text-secondary);
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--nav-item-min);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-control);
+  color: var(--color-text-secondary);
+  font: var(--text-body);
+  text-decoration: none;
+  transition: background-color var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard);
+}
+
+.nav-item + .nav-item {
+  margin-top: var(--space-1);
+}
+
+.nav-item__icon {
+  flex: 0 0 auto;
+  color: currentColor;
+}
+
+.nav-item__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-item:hover {
+  background: var(--accent-periwinkle-08);
+  color: var(--color-text-primary);
+}
+
+.nav-item:active {
+  background: var(--accent-periwinkle-16);
+}
+
+/* §8.4: the active state is communicated with fill, weight and an accessible
+ * state, not colour alone. The ribbon is the fill, the weight is 600, and
+ * aria-current is set on the element. */
+.nav-item[aria-current="page"] {
+  background: var(--gradient-ribbon);
+  color: var(--color-text-primary);
+  font-weight: 600;
+  box-shadow: var(--shadow-0);
+}
+
+.nav-item[aria-current="page"] .nav-item__icon {
+  color: var(--color-text-primary);
+}
+
+/* ---- §6.1 Collapsed mode. Icons with accessible labels on focus and hover. */
+
+.shell[data-nav="collapsed"] {
+  grid-template-columns: var(--shell-sidebar-collapsed) minmax(0, 1fr);
+}
+
+.shell[data-nav="collapsed"] .sidebar-brand {
+  padding: 0;
+  justify-content: center;
+}
+
+.shell[data-nav="collapsed"] .sidebar-brand__name,
+.shell[data-nav="collapsed"] .nav-item__label,
+.shell[data-nav="collapsed"] .nav-group__label,
+.shell[data-nav="collapsed"] .sidebar__footer .avatar-name {
+  /* §6.1: labels must remain readable in collapsed mode through accessible
+   * naming, so the text is removed visually and kept for assistive tech. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.shell[data-nav="collapsed"] .nav-item {
+  justify-content: center;
+  padding: 0;
+}
+
+.shell[data-nav="collapsed"] .nav-group + .nav-group {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+/* ---- §6.3 Top bar. 72px desktop, 56px mobile. Approved slots only:
+ * navigation trigger, page context, utility actions, status. ---- */
+
+.topbar {
+  grid-area: topbar;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: var(--shell-topbar);
+  padding: 0 var(--shell-padding-desktop);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  min-width: 0;
+}
+
+.topbar__context {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.topbar__title {
+  font: var(--text-heading-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.topbar__crumb {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font: var(--text-body-small);
+  color: var(--color-text-secondary);
+  min-width: 0;
+}
+
+.topbar__crumb a {
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.topbar__spacer {
+  flex: 1 1 auto;
+}
+
+/* The nav trigger is hidden on desktop, where the sidebar is persistent. */
+.topbar__nav-trigger {
+  display: none;
+}
+
+/* ---- §7.2 Breadcrumbs ---- */
+
+.breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font: var(--text-body-small);
+  color: var(--color-text-secondary);
+  min-width: 0;
+}
+
+.breadcrumbs__sep {
+  color: var(--color-text-disabled);
+}
+
+.breadcrumbs__current {
+  color: var(--color-text-primary);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- Main region ---- */
+
+.main {
+  grid-area: main;
+  min-width: 0;
+  padding: var(--space-8) var(--shell-padding-desktop) var(--space-16);
+}
+
+.main__inner {
+  max-width: var(--shell-content-max);
+  margin: 0 auto;
+}
+
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  /* §5.2: page vertical rhythm begins at 32px. */
+  margin-bottom: var(--space-8);
+}
+
+.page-head__text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.page-head__title {
+  font: var(--text-heading-1);
+  text-wrap: balance;
+}
+
+.page-head__lede {
+  font: var(--text-body-large);
+  color: var(--color-text-secondary);
+  max-width: var(--measure);
+}
+
+/* §7.2 Tabs. */
+.tabs {
+  display: flex;
+  gap: var(--space-1);
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: var(--space-6);
+  overflow-x: auto;
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--nav-item-min);
+  padding: 0 var(--space-4);
+  border-bottom: 2px solid transparent;
+  color: var(--color-text-secondary);
+  font: var(--text-body);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.tab:hover {
+  color: var(--color-text-primary);
+  border-bottom-color: var(--color-border);
+}
+
+.tab[aria-current="page"] {
+  color: var(--color-text-primary);
+  font-weight: 600;
+  border-bottom-color: var(--color-accent);
+}
+
+/* §7.2 Pagination. */
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-6);
+}
+
+.pagination__status {
+  margin: 0 auto;
+  font: var(--text-body-small);
+  color: var(--color-text-secondary);
+}
+
+/* ---- §5.3 Breakpoints. These are layout constraints, not new variants. ---- */
+
+/* tablet: 768px and up. */
+@media (max-width: 1023px) {
+  .shell {
+    grid-template-columns: var(--shell-sidebar-collapsed) minmax(0, 1fr);
+  }
+
+  .shell .sidebar-brand__name,
+  .shell .nav-item__label,
+  .shell .nav-group__label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .shell .nav-item {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .main {
+    padding-left: var(--shell-padding-tablet);
+    padding-right: var(--shell-padding-tablet);
+  }
+
+  .grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .col-2, .col-3 { grid-column: span 3; }
+  .col-4, .col-5, .col-6, .col-7, .col-8, .col-9, .col-10, .col-12 { grid-column: span 6; }
+}
+
+/* mobile: 767px and below. The sidebar becomes an overlay drawer using the
+ * same markup, per §6.2. */
+@media (max-width: 767px) {
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "topbar"
+      "main";
+  }
+
+  .sidebar {
+    display: none;
+  }
+
+  .topbar {
+    height: var(--shell-topbar-mobile);
+    padding: 0 var(--shell-padding-mobile);
+  }
+
+  .topbar__nav-trigger {
+    display: inline-flex;
+  }
+
+  .main {
+    padding: var(--space-6) var(--shell-padding-mobile) var(--space-12);
+  }
+
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .col-2, .col-3, .col-4, .col-5, .col-6,
+  .col-7, .col-8, .col-9, .col-10, .col-12 {
+    grid-column: span 1;
+  }
+
+  .page-head {
+    margin-bottom: var(--space-6);
+  }
+
+  .page-head__title {
+    font-size: 24px;
+    line-height: 32px;
+  }
+
+  .toast-region {
+    right: var(--space-4);
+    left: var(--space-4);
+    bottom: var(--space-4);
+    max-width: none;
+  }
+
+  /* §5.4: touch targets stay at least 44px. */
+  .nav-item {
+    justify-content: flex-start;
+    padding: 0 var(--space-3);
+  }
+
+  .nav-item__label,
+  .nav-group__label {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip-path: none;
+  }
+}
+
+/* wide: 1440px and up. */
+@media (min-width: 1440px) {
+  .main {
+    padding-left: var(--space-16);
+    padding-right: var(--space-16);
+  }
+}
+
+/* ---- §6.2 The mobile drawer reuses the sidebar markup. The <dialog> element
+ * gives focus trapping, Escape-to-close and inertness from the platform, which
+ * is why no JavaScript is needed to make it accessible. ---- */
+
+.nav-drawer {
+  width: min(var(--shell-drawer), calc(100vw - var(--space-8)));
+  max-width: var(--shell-drawer);
+  height: 100vh;
+  max-height: 100vh;
+  margin: 0 0 0 auto;
+  padding: 0;
+  border: 0;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  box-shadow: var(--shadow-2);
+}
+
+.nav-drawer::backdrop {
+  background: var(--color-overlay);
+}
+
+.nav-drawer__inner {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.nav-drawer__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  height: var(--shell-topbar-mobile);
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.nav-drawer__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-3);
+}
+
+/* A skip link is the first focusable thing on the page. It is visually hidden
+ * until it receives focus, then sits above the shell. Without it a keyboard user
+ * has to tab through the entire sidebar on every page, which design.md 13 rules
+ * out by implication: reading order and keyboard order must be identical, and a
+ * long repeated navigation in the tab order is not a usable one. */
+.skip-link {
+  position: absolute;
+  left: var(--space-4);
+  top: var(--space-4);
+  z-index: 100;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-control);
+  background: var(--gradient-ink);
+  color: var(--color-text-on-dark);
+  font: var(--text-label);
+  text-decoration: none;
+  box-shadow: var(--shadow-1);
+  transform: translateY(-200%);
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+
+.skip-link:focus-visible {
+  transform: translateY(0);
+}
+
+/* The main region takes focus when the skip link is used, so it must not draw a
+ * ring of its own: the visible indicator is the skip link itself. */
+.main:focus {
+  outline: none;
+}
+
+/* Sidebar identity block. design.md 6.1 reserves the footer for utility
+ * content; this is the only thing in it. */
+.sidebar__identity {
+  min-width: 0;
+}
+
+.sidebar__identity-name {
+  font: var(--text-label);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar__identity-role {
+  font: var(--text-body-small);
+  color: var(--color-text-secondary);
+  text-transform: capitalize;
+}
+
+.topbar__signout {
+  margin: 0;
+}
+
+/* The no-JavaScript mobile navigation. A <details> disclosure, because a
+ * portal that must work offline must also work with scripting off. */
+.noscript-nav {
+  position: fixed;
+  inset: auto var(--space-4) var(--space-4) auto;
+  z-index: 50;
+  max-width: calc(100vw - var(--space-8));
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-2);
+}
+
+.noscript-nav > summary {
+  min-height: var(--control-min);
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-control);
+  font: var(--text-label);
+  cursor: pointer;
+  list-style: none;
+}
+
+.nav-form {
+  display: contents;
+}
+
+/* ---- React shell additions ---------------------------------------------
+   The sidebar and drawer markup are the same components, so the collapsed and
+   drawer states share these rules rather than duplicating them. */
+
+.sidebar {
+  grid-area: side;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+}
+
+.nav-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sidebar__collapse {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.sidebar__footer {
+  flex: 0 0 auto;
+  padding: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+/* design.md 6.1: the active item uses the ribbon, and is never hidden or
+   signalled by colour alone — the weight and aria-current carry it too. */
+.nav-item--active {
+  background: var(--gradient-ribbon);
+  color: var(--color-text-primary);
+  font-weight: 600;
+  box-shadow: var(--shadow-0);
+}
+
+/* design.md 6.1: collapsed mode keeps the labels reachable. They are removed
+   visually and kept in the accessibility tree, because a collapsed item must
+   still be announced with its name. */
+.shell--collapsed .sidebar-brand__lockup,
+.shell--collapsed .nav-item__label,
+.shell--collapsed .nav-group__label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.shell--collapsed .nav-item {
+  justify-content: center;
+  padding: 0;
+}
+
+.shell--collapsed {
+  grid-template-columns: var(--shell-sidebar-collapsed) minmax(0, 1fr);
+}
+
+.shell--collapsed .sidebar-brand {
+  justify-content: center;
+  padding: 0;
+}
+
+/* The skip link is the first focusable thing on the page. design.md 13 requires
+   reading order and keyboard order to match, and a long repeated navigation in
+   the tab order is not a usable one. */
+.skip-link {
+  position: absolute;
+  top: var(--space-4);
+  left: var(--space-4);
+  z-index: 100;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-control);
+  background: var(--color-text-secondary);
+  color: var(--color-text-on-dark);
+  font: var(--text-label);
+  text-decoration: none;
+  transform: translateY(-200%);
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+.main:focus {
+  outline: none;
+}
+
+.topbar__account {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.topbar__account-name {
+  font: var(--text-label);
+  font-weight: 600;
+}
+
+.topbar__account-role {
+  font: var(--text-body-small);
+  color: var(--color-text-secondary);
+  text-transform: capitalize;
+}
+
+.breadcrumbs__list {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.breadcrumbs__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.tab--active {
+  color: var(--color-text-primary);
+  font-weight: 600;
+  border-bottom-color: var(--color-accent);
+}
+
+/* The drawer. design.md 8.6 permits 280, 360 or 420 widths only. */
+.drawer-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+}
+
+.drawer-backdrop {
+  position: absolute;
+  inset: 0;
+  background: var(--color-overlay);
+}
+
+.drawer {
+  position: relative;
+  z-index: 1;
+  width: min(360px, calc(100vw - var(--space-8)));
+  max-width: 360px;
+  height: 100vh;
+  margin: 0 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface);
+  border-left: 1px solid var(--color-border);
+  box-shadow: var(--shadow-2);
+}
+
+.drawer__head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  height: var(--shell-topbar-mobile);
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.drawer__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-3);
+}
+
+/* The modal layer. An overlay is a positioning concern rather than a colour
+   token, so the value lives here and not in the component. */
+.modal-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: var(--color-overlay);
+}
+
+.modal-layer .drawer {
+  margin: 0;
+  height: auto;
+  max-height: 100vh;
+  border-radius: var(--radius-panel);
+  border: 1px solid var(--color-border);
+}
+
+.alert__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.cluster-nowrap {
+  flex-wrap: nowrap;
+}
+
+@media (min-width: 1440px) {
+  .main {
+    padding-left: var(--space-16);
+    padding-right: var(--space-16);
+  }
+}
