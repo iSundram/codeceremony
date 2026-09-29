@@ -163,22 +163,97 @@ story nobody can verify.
 
 ## 5. Authorization
 
-One place authenticates a request: `Server.requirePermission`. It resolves the
-token, loads the user, checks the account state, and re-reads the role **from
-the store on every request** rather than from the token. Only the subject and
-session id are trusted from the token, so a role change takes effect on the very
-next request and a stale token can never be used to escalate.
+One place authenticates a request: `Server.requireAction`. It resolves the token,
+loads the user, checks the account state, and re-reads the role **from the store
+on every request** rather than from the token. Only the subject and session id
+are trusted from the token, so a role change takes effect on the very next
+request and a stale token can never be used to escalate.
 
 ```
-route → requirePermission(permission) → [per-handler object checks] → handler
-                │
-                └── resolves principal, puts it on the request context
+route → requireAction(authz.Action…) → resolve target → decide → idempotent(handler)
+                │                            │            │
+                │                            │            └── denial is audited
+                │                            └── from {slug} or ?event_id=
+                └── principal onto the request context
 ```
 
-Coarse role gating lives in the middleware. Object-level checks live in the
-handler, because they need the object. The list of object-level guards is
-short and deliberate: team membership and captaincy, submission visibility,
-assignment, comment authorship, event scoping, and the ballot.
+### Actions, not permissions
+
+Routes are gated on an **action** from a closed vocabulary in
+`internal/authz/action.go`, not on a role. `results.read` is a thing to be
+allowed; `organizer` is a label that happens to imply a bundle of them. Keeping
+the two apart is what makes an explicit grant possible: you cannot grant a role,
+only things.
+
+The vocabulary is closed, and `authz` refuses an action it does not know rather
+than defaulting to allow. `GET /v1/permissions` publishes the matrix by reading
+the real maps, so the documentation cannot drift from the enforcement.
+
+### Per-event scoping, enforced
+
+An earlier version of this document described a known limitation: any user with
+the global `organizer` role could act on any event by supplying its slug. That
+was true when it was written and is not true now.
+
+Every route declares the event it acts on, by `{slug}` in the path or by
+`?event_id=`, and `routeTarget` resolves it into the authorization target
+before any decision is made. Event roles are a **union** with global roles,
+strictly scoped by `EventRoleFor == Target.EventID` — an organizer of one event
+is refused on another, rather than being allowed by a global role and left for
+each handler to fence. The event's creator is automatically
+`EventRoleOwner`.
+
+The resolver applies a fixed order, and the order is the design:
+
+```
+account state → target constraints → explicit deny → explicit grant
+              → event role → global role → ownership
+```
+
+Deny before allow is the load-bearing part. A grant can add a permission; only a
+deny can take one away, which is what makes an incident response a single API
+call. Every decision carries a **reason** naming the rule that decided it, and
+that reason is what lands in the audit trail.
+
+Handlers still re-check against the object they load, because the route gate
+resolved an event and not a row. `requireRouteEvent` catches a handler acting on
+a different event than the path named.
+
+### Explicit grants
+
+`GET/POST /v1/grants` and `DELETE /v1/grants/{id}` manage per-user, per-action,
+per-event allows and denies, with a mandatory reason and optional expiry.
+Expired grants stop applying without anyone having to remember to revoke them,
+and a deny is evaluated before any allow, so revoking is immediate.
+
+An organizer can manage grants and audit exports for their own events; an admin
+can across the portal. Both are fenced by the event on the target, so neither
+reaches an event they do not hold.
+
+### The audit trail is hash-chained
+
+Every authorization decision is recorded: the action, the actor, the target, the
+event, the outcome, the reason, and the rule that produced it. Entries are
+chained — each carries the hash of the previous entry and an HMAC over its own
+canonical contents — so an edit or a removal after the fact is detectable.
+
+`GET /v1/audit/verify` reconciles the chain. `GET /v1/audit/actions.csv` exports
+it, `prev_hash` included, so a third party can check that the log is internally
+consistent without holding the key.
+
+**The honest limit**: the chain is keyed with HMAC, so the export proves the log
+is intact, and only the key holder can prove its *contents* are unedited.
+Publishing the key would detect server tampering but not compromise of the
+server itself. Retention trims the oldest entries; a retained chain verifies as
+a **suffix**, and the response reports how many entries were dropped, so an
+operator cannot present a truncated log as a complete one. A suffix cannot rule
+out a rewrite of the discarded prefix — that data is gone. Anchoring the head
+against an independently held copy is the mitigation, and that is what the
+published head hash is for.
+
+The key comes from `AUDIT_SECRET`, falling back to `SESSION_SECRET`. It is set
+where the store is built rather than in the seed, because a restored boot skips
+seeding entirely.
 
 ### Judge score isolation
 
@@ -191,33 +266,34 @@ backend. It is enforced **three times over**, deliberately:
 2. The store call is `ReviewsForJudge(eventID, principal.UserID)`. The judge
    identity is **never read from the request**; it comes from the verified
    session. There is no code path where a request chooses whose scores it sees.
-3. `GET /v1/organizer/reviews`, `/results`, `/export` and `/export.csv` all
-   require `ViewPeerScores` or `ExportData`, which the judge role does not hold.
+3. The organizer routes over reviews, results and exports require
+   `results.read` or `export.full`, which the judge role does not hold.
 
 There is no `/judges/{id}/scores` route and no per-judge resource of any kind.
 `internal/httpapi/isolation_test.go` probes all of these, plus the neighbouring
 leaks a `curl` would find: cross-judge assignment reads, judge address
 disclosure, and the participant-as-judge case.
 
-### Two role systems, consolidated to one enforced
+### Write safety
 
-The codebase grew a per-event role model (`owner`, `co_organizer`,
-`judge_liaison`, `viewer`) that nothing enforced — it was rendered into a
-permission-matrix endpoint and consulted nowhere. That is the kind of thing that
-reads as depth and is actually dead weight.
+Two mechanisms, both opt-in, because a protection nobody uses protects nothing.
 
-The enforced model is the five global roles: `visitor`, `participant`, `judge`,
-`organizer`, `admin`, with a `map[Role]map[Permission]` in `domain/roles.go` and
-`Role.Can()`. The per-event model is documented as advisory and is used for
-display only. `GET /v1/permissions` publishes the real matrix from the real
-source, so it cannot drift.
+**Idempotency.** An `Idempotency-Key` on any unsafe method makes a retry safe.
+The response is remembered and replayed byte for byte, so a retry cannot add a
+second ballot, a second submission version or a second round of mail. A key
+reused for a *different* body is a 422 rather than the first response, because
+returning that would be a lie about the second request. Keys are scoped per
+actor, so one caller cannot read another's cached response. A 5xx is not
+remembered, since it may have partially applied.
 
-**This is a known, deliberate limitation**: any user holding the global
-`organizer` role can act on any event by supplying its slug. For a
-single-organisation self-hosted portal, where the organizer role is trusted
-staff, that is a reasonable trade. For multi-tenant hosting it is not, and the
-fix is to enforce `EventRole.Can` on the `/v1/organizer/...` routes. It is stated
-here rather than left to be discovered.
+**Optimistic concurrency.** `ETag` on reads, `If-Match` on writes, for the two
+contended paths: editing a submission and saving a review. A 412 carries the
+current ETag so a client can re-read and merge without a second round trip.
+Unconditional requests still work.
+
+The review ETag deliberately excludes `UpdatedAt`: including it would invalidate
+the token even when a judge saved identical scores twice, and a client that
+saves then saves again would be refused against its own last write.
 
 ---
 
@@ -230,8 +306,25 @@ splitmix64 written out longhand precisely so the package stays pure and
 reproducible.
 
 Two estimators live side by side: the rubric pipeline (bounded, with confidence
-intervals) and Bradley-Terry pairwise (which reports `unbounded: true` when the
-panel is decisive enough that the maximum likelihood estimate does not exist).
+intervals) and Bradley-Terry pairwise, which reports `unbounded: true` when the
+panel is decisive enough that the maximum likelihood estimate does not exist.
+That condition is detected structurally — some project never lost and some never
+won — rather than from a threshold on the fitted spread, which does not fire for
+a decisive panel whose truncated fit stays small and would fire for a
+well-determined panel whose fit ran long.
+
+Comparisons reach the estimator from two places. A judge can record a
+**head-to-head verdict** directly (`POST /v1/events/{slug}/comparisons`), which is
+attributed, timestamped and reversible. Where the panel answered enough verdicts
+to stand on its own, the fit uses those; otherwise it derives comparisons from
+rubric scores. The response reports which, in `source`, because a ranking built
+from answers and one built from inference are different claims. A partial
+recorded set is never blended into a derived one: that would change the question
+being asked and make the ordering incomparable with the rubric pipeline.
+
+One verdict per judge per pair. Re-answering updates the row rather than adding
+one, because two rows for the same match would let a single judge contribute what
+the estimator would read as two independent verdicts.
 
 ---
 
@@ -328,7 +421,10 @@ against on the real schema.
 
 ## 11. Testing
 
-Go's standard library only. `go test ./...` runs eight packages.
+Go's standard library only. `go test ./...` runs nine packages. `tests/e2e.py`
+builds the binary, boots it on a scratch port and runs 129 assertions against a
+real process, because several of the things below only exist or only fail across
+a real connection.
 
 The tests are not coverage for its own sake. Each one exists because something
 was wrong at some point during the build:
@@ -345,6 +441,23 @@ was wrong at some point during the build:
   endpoints.
 - `internal/fixtures` — a weight distribution that produced 40/70/15 for three
   criteria, a total of 125, for a rubric the validator would reject.
+- `internal/httpapi/audit_coverage_test.go` — four load-bearing handlers
+  (submission create, review save, staff add and remove, sign-in and sign-out)
+  that recorded nothing, because the audit helper wrote to a different table than
+  the one the chain reads.
+- `internal/store/action_audit_test.go` — a chain that could never verify after
+  retention trimming, because verification was anchored on genesis and the oldest
+  entries were gone.
+- `internal/judging/pairwise_test.go` — the decisive-panel warning firing on
+  every response, because both sentinels for the strength spread were seeded so
+  that neither could ever update. The existing test for that warning had been
+  passing for that reason and was not testing the heuristic.
+- `internal/httpapi/concurrency_test.go` — a review ETag that included
+  `UpdatedAt`, so a judge saving identical scores twice invalidated their own
+  token and a save-then-save client was refused against its last write.
+
+`AUDIT_SECRET` is the newest configuration variable and has a fallback worth
+knowing about; see §12.
 
 ---
 
@@ -361,3 +474,18 @@ That last guard is the important one. The seeded credentials are correct for a
 self-hosted demo and indefensible in production, and the failure mode of getting
 it wrong is a full authentication bypass. The configuration refuses the
 combination rather than trusting the operator to notice.
+
+### AUDIT_SECRET
+
+Keys the HMAC chain on the action audit. It defaults to `SESSION_SECRET` so a
+working portal does not need a second variable, and it is separate so an operator
+can rotate sessions without invalidating the audit. Boot logs a warning when it
+is derived, because the consequence of not knowing is that rotating
+`SESSION_SECRET` later silently invalidates every historical audit entry, and
+that is discovered by watching verifications fail rather than by reading a
+release note.
+
+`IDEMPOTENCY-TTL` is not configurable. The retention window is a day, which is
+long enough to cover a client retrying after a weekend and short enough that the
+table stays small. If an operator needs to reason about its size,
+`IdempotencyStats` reports the tracked and pending counts.

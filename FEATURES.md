@@ -255,6 +255,13 @@ A UI route being hidden is never considered authorization.
 
 ### 5.3 Permission matrix
 
+**The authoritative matrix is `GET /v1/permissions`**, generated from the same
+maps the resolver reads. A hand-maintained table like this one is a second source
+of truth and will drift; it is here to be readable, not to be trusted over the
+endpoint. Authorization is by **action**, not by role, and an event role unions
+with the global role within its own event only — so "Organizer: Yes" below means
+for events they organize, not for every event on the portal.
+
 | Capability | Visitor | Participant | Judge | Organizer | Admin |
 |---|:---:|:---:|:---:|:---:|:---:|
 | View public event | Yes | Yes | Yes | Yes | Yes |
@@ -268,6 +275,10 @@ A UI route being hidden is never considered authorization.
 | View another judge's scores | No | No | No | Yes | Yes |
 | View aggregate results early | No | No | No | Yes | Yes |
 | Configure rubric | No | No | No | Yes | Yes |
+| Record head-to-head comparison | No | No | Assigned only | Yes | Yes |
+| View the action audit | No | No | No | Own events | Yes |
+| Verify the audit chain | No | No | No | Own events | Yes |
+| Grant or deny an action | No | No | No | Own events | Yes |
 | Publish results | No | No | No | Yes | Yes |
 | Moderate comments/votes | No | No | No | Yes | Yes |
 | Manage platform users | No | No | No | No | Yes |

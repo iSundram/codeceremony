@@ -76,7 +76,29 @@ tables — the reasoning is in section 2.
 | `normalization_runs` | reproducibility | `method_version`, `weights`, `input_hash` |
 | `normalized_scores` | the computed result | `raw_score`, `normalized_score`, `low_information`, `details` |
 | `result_snapshots` | published standings | immutable |
+| `comparisons` | recorded head-to-head verdicts | one per `(judge, {left, right})` unordered; `verdict` in {left, right, tie} |
+| `grants` | explicit allows and denies | `(user, action, event, object)`; mandatory `reason`; optional expiry |
+| `action_audit_entries` | the accountability record | append-only, hash-chained, `seq` contiguous within the retained window |
 | `audit_events` / `activity_entries` | the trail | actor set-null on delete, so history survives |
+
+Two of these deserve a note.
+
+**`comparisons` is keyed on the unordered pair.** One judge has one answer per
+pair of projects, and re-answering — including with the two sides swapped —
+updates the row rather than adding one. Two rows for one match would let a single
+judge contribute what the estimator reads as two independent verdicts. The row
+stores the orientation the judge last used, so a change of mind is visible in the
+data rather than hidden in a normalisation step.
+
+**`action_audit_entries` is a chain, not a log.** Each entry carries `seq`,
+`prev_hash` and `hash`, where the hash is an HMAC over the entry's own canonical
+contents. An edit or a removal after the fact breaks the chain from that point
+on, which is what makes the trail evidence rather than a record. Retention trims
+the oldest entries; the retained window verifies as a **suffix**, and `dropped`
+is reported so a reader knows the chain they hold is not the whole history. A
+suffix cannot rule out a rewrite of the discarded prefix, because that data is
+gone. The published `head` exists so a verifier can anchor against a copy they
+hold independently.
 
 ### The two tables worth defending
 
@@ -144,8 +166,10 @@ refused rather than silently coerced.
   "duplicate_flags": [ /* … */ ],
   "comments": [ /* … */ ],
   "ballots": [ /* … */ ],
+  "comparisons": [ /* … */ ],
+  "grants": [ /* … */ ],
   "activity_entries": [ /* … */ ]
-  // … 27 collections in total
+  // … 32 collections in total
 }
 ```
 
@@ -164,6 +188,14 @@ refused rather than silently coerced.
   section 4 for why that is the right trade.
 - **Composite keys are stored as objects, not concatenated strings**, so the
   format stays readable and a key cannot be forged by putting a colon in an id.
+- **Grants are persisted, the action audit chain is not.** An explicit allow or
+  deny is a decision someone made and relies on, so losing it on a restart would
+  silently change who can do what. The chain is evidence about the past, and it
+  is rebuilt empty on boot; restoring it from a snapshot would mean a snapshot
+  could rewrite history, which is the opposite of what a chain is for. The same
+  reasoning puts idempotency records in memory: a forgotten key risks a
+  duplicate, a persisted one would make a key mean different things before and
+  after a restart.
 
 ### Operational use
 
@@ -272,10 +304,19 @@ largest-remainder apportionment.
 There is no hard delete anywhere in the system.
 
 - **Users** are soft-deleted: `state` moves to `deletion_pending` or `suspended`.
-  A pending-deletion account can only reach the cancel-deletion route, which is
-  enforced by a special case in `requirePermission`.
+  Account state is the **first** thing the resolver checks, so a pending-deletion
+  account is refused every action except the one that cancels the deletion, and
+  that exception is expressed as an allow in the same table rather than as a
+  special case in the middleware.
 - **Teams** are archived, with `deleted_at` set and memberships cascaded.
 - **Events** are not deleted at all.
+- **Comparisons** are withdrawable rather than deletable, and a withdrawal is
+  written to the audit chain with the verdict it withdrew. A judge who recorded
+  the wrong answer should be able to take it back; the record that they were
+  wrong, and when they corrected it, should outlive the mistake.
+- **Grants** are revoked rather than deleted, and an expired grant stops applying
+  on its own, so a lapsed delegation withdraws itself without anyone having to
+  remember it existed.
 
 This is deliberate for a judging platform. A submitted project, a written review
 and a published result are the evidentiary record of a decision that may be

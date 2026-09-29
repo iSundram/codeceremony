@@ -538,23 +538,26 @@ An active team cannot be deleted by a team leader or ordinary member.
 
 ### 9.1 Permission evaluation
 
-Every protected action evaluates:
+Every protected action is evaluated in a fixed order by one resolver, and the
+order is the design rather than an implementation detail:
 
 ```text
-identity
-  + authentication method
-  + account state
-  + global role
-  + event scope
-  + team scope
-  + judge track scope
-  + resource ownership
-  + resource state
-  + deadline/window
-  + explicit policy
+account state          → suspended or pending-deletion stops here
+target constraints     → is this action even applicable to this kind of object
+explicit deny          → a recorded deny wins over everything below it
+explicit grant         → a recorded allow
+event role             → scoped to this event only
+global role            → the platform-wide bundle
+ownership              → captain, author, assignee
 ```
 
-All required checks must pass. A role match alone never grants access.
+A role match alone never grants access, and a role cannot take back what a deny
+removed. The order means an incident response is one API call: recording a deny
+takes effect on the next request, with no role change and no wait.
+
+Every decision carries a **reason** naming the rule that produced it, and that
+reason is what lands in the audit trail — so a refusal is answerable rather than
+merely deniable.
 
 ### 9.2 Permission catalog
 

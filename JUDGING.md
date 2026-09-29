@@ -314,18 +314,53 @@ actually do when forced to rank things.
 
 So the portal offers a second view built only on head-to-head verdicts.
 
-### Deriving comparisons
+### Recorded verdicts, and derived comparisons
 
-The fixture file contains rubric scores, not explicit verdicts, so comparisons
-are derived: for each judge, every pair of projects that judge reviewed becomes
-one comparison, won by the higher weighted score. A judge who scored A at 4 and
-B at 3 has, on their own scale, said A beats B.
+A comparison can arrive two ways, and the response says which it used.
 
-Deriving it this way means **every comparison is attributable to a named judge
-and traceable back to the reviews behind it**, which an organizer can audit. A
-review missing a weighted criterion is excluded from head-to-head comparison
-rather than compared on the criteria it happens to carry, because that would be
-a different question from the one being asked.
+**Recorded.** A judge can answer the question directly:
+
+```
+POST /v1/events/{slug}/comparisons
+{ "left": "prj_07", "right": "prj_19", "verdict": "left" }
+```
+
+`verdict` is `left`, `right` or `tie`. Both projects must be assigned to the
+judge, so a judge cannot rank a field they were not given. The verdict is
+attributed, timestamped, and withdrawable, and a withdrawal is in the audit trail
+with the verdict it withdrew — the record of the mistake survives even though the
+verdict does not.
+
+One judge has one answer per pair. Re-answering, including with the two sides
+swapped, **updates the same row**. Two rows for one match would let a single
+judge contribute what the estimator reads as two independent verdicts, and would
+weight that match as if two judges had played it. The stored row keeps the
+orientation the judge last used, so a change of mind is visible rather than a
+silently different record.
+
+**Derived.** The fixture file contains rubric scores, not explicit verdicts, so
+where the panel has not answered enough, comparisons are derived: for each judge,
+every pair of projects that judge reviewed becomes one comparison, won by the
+higher weighted score. A judge who scored A at 4 and B at 3 has, on their own
+scale, said A beats B. A review missing a weighted criterion is excluded from
+head-to-head comparison rather than compared on the criteria it happens to carry,
+because that would be a different question from the one being asked.
+
+The view reports `source` (`recorded` or `derived`) and splits the total into
+`recorded_comparisons` and `derived_comparisons`, because a ranking built from
+answers and one built from inference are different claims.
+
+A recorded set is used only when it covers **the same projects** the derived fit
+did. A partial set is never blended into a derived one: dropping the derived
+comparisons it does not cover would change the question being asked, and the
+resulting ordering would no longer be comparable with the rubric pipeline. In
+that case the view falls back to derived and says so.
+
+**Why the split matters.** A derived comparison is a chain of inferences: a
+4-versus-3 becomes a win, and that win is read as a preference the judge
+actually expressed. It is usually right. It is not the same kind of evidence as
+being asked which of two you prefer, and a panel that disagrees with itself across
+the two is telling you something about how absolute scales are being used.
 
 ### The model and the fit
 
@@ -343,7 +378,18 @@ Two details that matter:
 - **Ties.** A tied comparison contributes half a win to each side. Without that,
   an undecided comparison would systematically treat the two projects as if it
   had never happened, and the estimator's total weight would no longer equal the
-  number of games played.
+  number of games played. The half-win is **not** counted toward the reported win
+  rate, which is a proportion of decided comparisons. A record of nothing but
+  draws has no decided comparisons, so its `win_rate` is null rather than 1.
+- **When the estimate does not exist.** If some project never lost and some never
+  won, the strength ratio between them grows without limit and there is no finite
+  maximum likelihood. That is detected from the tally — structurally — rather
+  than from the size of the fitted spread, because a spread threshold misses a
+  decisive panel whose truncated fit happens to stay small, and would fire for a
+  well-determined panel whose fit ran long. The response sets `unbounded: true`
+  and says in `note` that the numbers are a truncated fit rather than estimates.
+  The ranking is still reported, because a decisive panel is a common and
+  informative outcome; it is the *strengths* that stop being measurements.
 
 ### The result on the fixture data
 

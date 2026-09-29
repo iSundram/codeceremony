@@ -145,23 +145,30 @@ the brute force it prevents. This is a considered trade, not an oversight.
 *Threat.* An organizer of event A reads or rewrites event B's reviews, results or
 settings by supplying B's slug or id.
 
-*Defence.* Partial, and this is the most significant gap in the system.
-`domain.EventRole` defines a per-event permission matrix with an owner role that
-carries `ViewPeerScores` — **and no route consults it.** It is rendered into
-`GET /v1/permissions` and used for display only. The enforced model is the five
-global roles, so any user holding the global `organizer` role can act on any
-event.
+*Defence.* Enforced. Every route declares the event it acts on, by `{slug}` in the
+path or by `?event_id=`, and `routeTarget` resolves it into the authorization
+target **before any decision is made**. Event roles are a union with global roles,
+strictly scoped by `EventRoleFor == Target.EventID`, so an organizer of one event
+is refused on another rather than being allowed by a global role and left for each
+handler to fence. The event's creator is automatically `EventRoleOwner`.
 
-*Why it is like this.* For the target deployment — one organisation self-hosting
-its own events — the organizer role *is* trusted staff, and a per-event model
-would add a second authorization system without adding a trust boundary that
-does not already exist.
+An explicit **deny** for a user, action and event is evaluated before any allow,
+and revoke is immediate — so an incident is one API call, not a role change and a
+wait. The resolver reports which rule decided, and that reason is in the audit.
 
-*Why it is still a gap.* Any deployment that hosts events for mutually distrusting
-organisations inherits a cross-tenant read. The fix is to enforce `EventRole.Can`
-on the `/v1/organizer/...` routes, which is a bounded change: the matrix exists,
-the roles exist, the check does not. Stated here rather than left to be
-discovered.
+*What is left.* Two things, both narrow.
+
+A handler that loads a row and acts on it still has to re-check against the row,
+because the route gate resolved an event and not a record. Those checks exist
+per handler. `requireRouteEvent` catches a handler that ends up acting on a
+different event than the path named, which is the failure mode where a fence is
+present but bypassed rather than absent.
+
+Event roles are **stored but not derived from a trust anchor**: anyone who can
+create an event can make themselves its owner, which is correct, but there is no
+invitation or verification step for adding a *co*-organizer. A co-organizer is
+trusted at the level of the event, which is the same trust level the global
+organizer role carries.
 
 ### A8 — PII disclosure
 
@@ -233,19 +240,28 @@ gallery is a self-inflicted denial of service with no security benefit.
 | Account lockout | Deliberately omitted: it is a denial-of-service weapon aimed at judges. |
 | Rate-limit evasion by a botnet | Accepted. Per-account limits handle the realistic case. |
 | Transport security | The portal speaks plain HTTP. TLS is expected to terminate in front of it, and is not configured here. |
-| Multi-tenant isolation | See A7. Correct for the stated deployment, a gap for any other. |
+| A co-organizer acting maliciously inside their own event | A7 defends the boundary *between* events. Inside one, the platform's contribution is the audit trail, not prevention. |
+| A forged `Idempotency-Key` colliding with a victim's | Keys are scoped by actor, so a key only ever resolves inside the caller's own namespace. There is no cross-caller effect. |
+| Rewriting the discarded prefix of a trimmed audit chain | Retention means a suffix cannot rule this out. Mitigated by publishing `head` for anchoring against an independently held copy. |
 
 ---
 
 ## 3. Two design choices that run through all of it
 
-**Authorization lives in the backend, in one place.** `Server.requirePermission`
-is the only thing that authenticates a request, and it re-reads the role from the
+**Authorization lives in the backend, in one place.** `Server.requireAction` is
+the only thing that authenticates a request, and it re-reads the role from the
 store on every request rather than trusting the token — so a role change takes
-effect immediately and a stale token cannot escalate. Object-level checks
-(assignment, team membership, comment authorship) live in the handlers, because
-they need the object. The requirement is that a check must exist where `curl`
-arrives; a check in a template is not a check.
+effect immediately and a stale token cannot escalate. Routes are gated on an
+**action** from a closed vocabulary rather than on a role, which is what makes an
+explicit grant expressible: you cannot grant a role, only things. Object-level
+checks (assignment, team membership, comment authorship) live in the handlers,
+because they need the object. The requirement is that a check must exist where
+`curl` arrives; a check in a template is not a check.
+
+**Every decision is accounted for, including the refusals.** A denial is written
+to the same hash-chained log as a success, with the reason and the rule that
+produced it. A trail that records only what succeeded cannot answer the question
+an incident review actually starts from.
 
 **Rate limits are keyed on the account, not the address, wherever the caller is
 authenticated.** This is not a detail. A hackathon venue, a university, or a

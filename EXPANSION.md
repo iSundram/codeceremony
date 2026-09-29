@@ -443,3 +443,54 @@ PostgreSQL adapter and migration execution, public voting and comments, notifica
 ### Fix found in this tranche
 
 `manage_integrations` was only granted to platform admins, so organizers could not configure webhooks for the hackathons they host. It is now granted to organizers as well.
+
+
+---
+
+## 13. Shipped in the authorization and accountability tranche
+
+### Action-centric authorization
+
+- Routes are gated on an **action** from a closed vocabulary (`internal/authz`), not on a role. A role is a bundle of actions; an action is the thing that can be allowed, granted or denied.
+- A fixed resolution order: account state, target constraints, explicit deny, explicit grant, event role, global role, ownership. Every decision reports the rule that produced it.
+- `GET /v1/permissions` publishes the matrix by reading the real maps, so the documentation cannot drift from the enforcement.
+
+### Per-event scoping, enforced
+
+- Every route declares its event by `{slug}` or by `?event_id=`, and the gate resolves it before deciding. This closes the cross-event gap that `THREAT-MODEL.md` A7 previously described as open.
+- Event roles are a **union** with global roles, strictly scoped by event. An organizer of one event is refused on another.
+- Event creators are automatically `EventRoleOwner`.
+
+### Explicit grants
+
+- `GET|POST /v1/grants` and `DELETE /v1/grants/{id}`: per-user, per-action, per-event allows and denies with a mandatory reason and optional expiry.
+- Deny is evaluated before allow, so revocation is immediate. Expired grants stop applying on their own.
+- Grants are persisted in the snapshot.
+
+### Hash-chained action audit
+
+- Every authorization decision, including refusals, is written to a hash-chained log with the actor, action, target, event, outcome, reason and originating rule.
+- `GET /v1/audit/actions` (filterable, paged backwards by sequence), `GET /v1/audit/actions.csv` (with `prev_hash`, so a third party can check the log is internally consistent), and `GET /v1/audit/verify`.
+- Retention trims the oldest entries; the retained window verifies as a **suffix** and the dropped count is reported. The `head` is published so a verifier can anchor against a copy they hold.
+- Keyed from `AUDIT_SECRET`, falling back to `SESSION_SECRET`, with a boot warning when derived.
+
+### Write safety
+
+- `Idempotency-Key` on any unsafe method. The response is remembered and replayed byte for byte, so a retry cannot double-apply. A key reused for a different body is a 422. Keys are scoped per actor. A 5xx is not remembered.
+- `ETag` on reads and `If-Match` on writes for the two contended paths: editing a submission, and saving a review. A 412 carries the current ETag. Unconditional requests still work.
+
+### Recorded pairwise comparisons
+
+- `domain.Comparison`: an attributed, timestamped, reversible head-to-head verdict, as distinct from a comparison inferred from rubric scores.
+- `POST /v1/events/{slug}/comparisons` (both projects must be assigned to the judge), `GET` for a judge and for an organizer, and `DELETE /v1/organizer/comparisons/{id}`.
+- One verdict per judge per unordered pair; re-answering updates the row, so one judge cannot contribute two verdicts to the same match.
+- The pairwise view uses recorded verdicts when the panel answered enough to stand alone, and reports `source`, `recorded_comparisons` and `derived_comparisons` either way. A partial recorded set is never blended into a derived one.
+
+### Fixes found by the new tests
+
+- The decisive-panel warning in the pairwise view fired on **every** response: both sentinels for the strength spread were seeded so that neither could update. It is now detected structurally.
+- A trimmed audit chain could never verify, because verification was anchored on genesis and the oldest entries had been discarded.
+- Four load-bearing handlers — submission create, review save, staff add and remove, sign-in and sign-out — recorded nothing, because the audit helper wrote to a different table than the chain reads.
+- The audit chain was keyed with the empty string in every real run: `AuditSecret` existed on the seed struct and was set by nothing outside tests, and a restored boot skips seeding entirely.
+- Organizer routes addressed by `?event_id=` could never match a per-event grant or deny, because the event was only resolved from the path.
+- An all-ties record reported a 100% win rate, because a tie contributes half a win and the rate was computed from the weighted totals.
